@@ -1,70 +1,134 @@
-NODE_ENV=production
-WORKER_MODE=scanner
-PAYMENT_SCANNER_ENABLED=true
-PAYMENT_SCANNER_WORKER_ID=scanner-hyperscale-0
-PAYMENT_SCANNER_SHARD_COUNT=256
-PAYMENT_SCANNER_SHARD_INDEX=0
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
 
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-TONAPI_KEY=
-TONAPI_BASE_URL=https://tonapi.io
+function readArg(name, fallback = "") {
+  const prefix = `--${name}=`;
+  const direct = process.argv.find((item) => item.startsWith(prefix));
+  if (direct) return direct.slice(prefix.length);
 
-PUBLIC_BACKEND_URL=https://vidipay-backend.onrender.com
-PUBLIC_APP_URL=https://shshavkatjon2-blip.github.io/vidipay-fronted
-GAME_URL=https://shshavkatjon2-blip.github.io/vidipay-fronted/index.html
-ALLOWED_ORIGINS=https://shshavkatjon2-blip.github.io,https://vidipay-backend.onrender.com,https://web.telegram.org,https://telegram.org
+  const index = process.argv.indexOf(`--${name}`);
+  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1];
+  return fallback;
+}
 
-ACTIVATION_DEPOSIT_TON=6.99
-ACTIVATION_FEE_TON=0.83
-ACTIVATION_REFUND_TON=6.99
-ACTIVATION_PAYOUT_TON=6.16
-TON_PAYMENT_AMOUNT=6.99
-PAYMENT_MIN_RECEIVED_TON=6.90
-PAYMENT_MAX_RECEIVED_TON=7.05
-TON_PAYMENT_MIN_RECEIVED=6.90
-TON_PAYMENT_MAX_RECEIVED=7.05
-WALLET_UNLOCK_REQUIRED_USD=20
+function walkFiles(root, matcher, results = []) {
+  if (!fs.existsSync(root)) return results;
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      walkFiles(fullPath, matcher, results);
+    } else if (!matcher || matcher(fullPath)) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
 
-PAYMENT_ORDER_TTL_MINUTES=5
-PAYMENT_LATE_GRACE_MINUTES=30
-PAYMENT_WALLET_COOLDOWN_MINUTES=30
-PAYMENT_SCAN_INTERVAL_MS=3000
-PAYMENT_SCAN_BATCH_SIZE=500
-PAYMENT_SCAN_CONCURRENCY=32
-PAYMENT_SCAN_JITTER_MS=2500
-PAYMENT_SCAN_ORDER_DELAY_MS=10
-PAYMENT_SCAN_MAX_ERRORS_PER_RUN=500
+function countLines(filePath) {
+  let count = 0;
+  const content = fs.readFileSync(filePath, "utf8");
+  for (const char of content) {
+    if (char === "\n") count += 1;
+  }
+  return content ? count + (content.endsWith("\n") ? 0 : 1) : 0;
+}
 
-RATE_LIMIT_BACKEND=memory
-REDIS_URL=
-SETTINGS_CACHE_TTL_MS=1000
-REQUEST_SLOW_MS=1500
-SERVER_KEEP_ALIVE_TIMEOUT_MS=65000
-SERVER_HEADERS_TIMEOUT_MS=70000
-SERVER_REQUEST_TIMEOUT_MS=120000
-SHUTDOWN_GRACE_MS=25000
-CAPACITY_INITIAL_USERS=300000000
-CAPACITY_TARGET_USERS=30000000000
-CAPACITY_3M_MIN_SCANNER_WORKERS=4
-CAPACITY_100X_MIN_SCANNER_WORKERS=64
-CAPACITY_HYPERSCALE_MIN_SCANNER_WORKERS=256
+function sha256(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
 
-TONAPI_REQUEST_TIMEOUT_MS=12000
-TONAPI_RETRY_COUNT=2
-TONAPI_RETRY_BASE_MS=250
+function countSqlRows(filePath) {
+  const content = fs.readFileSync(filePath, "utf8");
+  const matches = content.match(/\('TON',\s*'TON',\s*'[^']+'\)/g);
+  return matches ? matches.length : 0;
+}
 
-TON_AUTO_PAYOUT_ENABLED=false
-TON_SIGNER_ENABLED=false
-TON_SIGNER_NETWORK=mainnet
-TON_RPC_ENDPOINT=
-TON_RPC_KEY=
-TON_RPC_API_KEY=
-TON_SIGNER_KEYS_DIR=
-TON_PAYOUT_GAS_RESERVE=0.10
-TON_PAYOUT_BODY=VidiPay activation payout
+function validateWalletJson(filePath) {
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return Boolean(data.address && (data.mnemonic || data.seed_hex));
+  } catch {
+    return false;
+  }
+}
 
-ADMIN_TOKEN=
-BOT_TOKEN=
-TELEGRAM_WEBHOOK_SECRET=
-FIAT_WEBHOOK_SECRET=
+function writeJson(filePath, data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+}
+
+async function main() {
+  const poolDir = path.resolve(readArg("pool", process.cwd()));
+  const expectedCount = Number(readArg("expected-count", "0"));
+  const failOnPrivateKeysMissing = readArg("require-private-keys", "true") !== "false";
+
+  if (!fs.existsSync(poolDir)) {
+    throw new Error(`Pool folder not found: ${poolDir}`);
+  }
+
+  const sqlFiles = fs.readdirSync(poolDir)
+    .filter((name) => /^public-addresses-\d+\.sql$/i.test(name))
+    .sort()
+    .map((name) => path.join(poolDir, name));
+  const privateDir = path.join(poolDir, "private-keys");
+  const privateKeyFiles = walkFiles(privateDir, (file) => file.endsWith(".json"));
+  const manifestPath = path.join(poolDir, "wallet-manifest.public.jsonl");
+  const csvPath = path.join(poolDir, "wallets-summary.csv");
+
+  let sqlRowCount = 0;
+  const sqlBatches = sqlFiles.map((filePath) => {
+    const rows = countSqlRows(filePath);
+    sqlRowCount += rows;
+    return {
+      file: path.basename(filePath),
+      rows,
+      sha256: sha256(filePath)
+    };
+  });
+
+  const manifestLines = fs.existsSync(manifestPath) ? countLines(manifestPath) : 0;
+  const csvLines = fs.existsSync(csvPath) ? Math.max(0, countLines(csvPath) - 1) : 0;
+  const invalidPrivateFiles = privateKeyFiles.slice(0, 1000).filter((file) => !validateWalletJson(file));
+
+  const checks = {
+    pool_dir_exists: fs.existsSync(poolDir),
+    sql_batches_found: sqlFiles.length > 0,
+    sql_rows_match_expected: expectedCount > 0 ? sqlRowCount === expectedCount : true,
+    manifest_matches_sql_rows: manifestLines === sqlRowCount,
+    csv_matches_sql_rows: csvLines === sqlRowCount,
+    private_keys_present: failOnPrivateKeysMissing ? privateKeyFiles.length === sqlRowCount : true,
+    private_key_sample_valid: invalidPrivateFiles.length === 0
+  };
+
+  const report = {
+    status: Object.values(checks).every(Boolean) ? "ok" : "failed",
+    pool_dir: poolDir,
+    expected_count: expectedCount || null,
+    sql_batch_count: sqlFiles.length,
+    sql_row_count: sqlRowCount,
+    manifest_rows: manifestLines,
+    csv_rows: csvLines,
+    private_key_files: privateKeyFiles.length,
+    invalid_private_key_sample_count: invalidPrivateFiles.length,
+    checks,
+    sql_batches: sqlBatches
+  };
+
+  const reportPath = path.join(poolDir, "wallet-pool-verification-report.json");
+  writeJson(reportPath, report);
+
+  console.log(`Wallet pool verification: ${report.status}`);
+  console.log(`SQL rows: ${sqlRowCount}`);
+  console.log(`Manifest rows: ${manifestLines}`);
+  console.log(`CSV rows: ${csvLines}`);
+  console.log(`Private key files: ${privateKeyFiles.length}`);
+  console.log(`Report: ${reportPath}`);
+
+  if (report.status !== "ok") process.exitCode = 1;
+}
+
+main().catch((error) => {
+  console.error(error.message || error);
+  process.exit(1);
+});

@@ -7,7 +7,7 @@ function readNumber(name, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.floor(raw)));
 }
 
-const shardCount = readNumber("PAYMENT_SCANNER_SHARD_COUNT", 256, 1, 2048);
+const shardCount = readNumber("PAYMENT_SCANNER_SHARD_COUNT", 16, 1, 2048);
 const batchSize = readNumber("PAYMENT_SCAN_BATCH_SIZE", 500, 1, 5000);
 const concurrency = readNumber("PAYMENT_SCAN_CONCURRENCY", 32, 1, 128);
 const intervalMs = readNumber("PAYMENT_SCAN_INTERVAL_MS", 3000, 1000, 300000);
@@ -20,7 +20,7 @@ function serviceYaml(index) {
     name: vidipay-payment-scanner-hyperscale-${index}
     runtime: node
     plan: standard
-    buildCommand: npm ci --omit=dev
+    buildCommand: node render-build-fix.cjs && npm install --omit=dev --no-audit --no-fund
     startCommand: npm run start:scanner
     envVars:
       - key: NODE_ENV
