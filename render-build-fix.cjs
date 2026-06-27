@@ -53,7 +53,7 @@ const pkg = {
   }
 };
 
-console.log("=== VIDIPAY API BUILD FIX START ===");
+console.log("=== VIDIPAY SCANNER BUILD FIX START ===");
 console.log("cwd=", process.cwd());
 console.log("files_before=", fs.readdirSync(".").join(", "));
 fs.rmSync("node_modules", { recursive: true, force: true });
@@ -62,6 +62,6 @@ fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 JSON.parse(fs.readFileSync("package.json", "utf8"));
 console.log("package_json_rewritten=true");
 console.log("server_js_exists=", fs.existsSync("server.js"));
-console.log("scripts_dir_exists=", fs.existsSync("scripts"));
+console.log("scanner_entry_exists=", fs.existsSync("scripts/start-scanner.js"));
 console.log("node_modules_removed=", !fs.existsSync("node_modules"));
-console.log("=== VIDIPAY API BUILD FIX END ===");
+console.log("=== VIDIPAY SCANNER BUILD FIX END ===");
