@@ -19,8 +19,11 @@
     "verify:render": "node scripts/verify-render-blueprints-1_5m.js",
     "verify:sql": "node scripts/verify-sql-package-1_5m.js",
     "verify:contract": "node scripts/verify-contract-1_5m.js",
-    "verify:all": "npm run verify:package && npm run verify:render && npm run verify:sql && npm run verify:contract",
+    "verify:blockers": "node scripts/verify-remaining-blockers-package-1_5m.js",
+    "verify:all": "npm run verify:package && npm run verify:render && npm run verify:sql && npm run verify:contract && npm run verify:blockers",
     "verify:staging": "node scripts/verify-staging-deploy.js",
+    "wallets:topup-plan": "node scripts/plan-wallet-topup-1_5m.js",
+    "wallets:generate-missing": "node scripts/generate-missing-ton-wallets-to-target-1_5m.js",
     "wallets:verify": "node scripts/verify-ton-wallet-pool.js"
   },
   "dependencies": {

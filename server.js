@@ -350,6 +350,7 @@ const OPS_DB_AUDIT_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.en
 const SCALE_AUDIT_COUNT_MODE = ["exact", "planned", "estimated"].includes(String(process.env.SCALE_AUDIT_COUNT_MODE || "").trim().toLowerCase())
   ? String(process.env.SCALE_AUDIT_COUNT_MODE).trim().toLowerCase()
   : "planned";
+const REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M = process.env.REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M !== "false";
 const rateBuckets = new Map();
 let redisClientPromise = null;
 let redisRateLimitWarned = false;
@@ -395,6 +396,43 @@ function getRedisClient() {
   });
 
   return redisClientPromise;
+}
+
+async function checkRedisHealth() {
+  if (RATE_LIMIT_BACKEND !== "redis") {
+    return {
+      ok: false,
+      backend: RATE_LIMIT_BACKEND,
+      configured: Boolean(REDIS_URL),
+      message: "RATE_LIMIT_BACKEND is not redis"
+    };
+  }
+  if (!REDIS_URL) {
+    return {
+      ok: false,
+      backend: RATE_LIMIT_BACKEND,
+      configured: false,
+      message: "REDIS_URL is missing"
+    };
+  }
+  try {
+    const client = await withOpsTimeout(getRedisClient(), "redis_connect");
+    const pong = await withOpsTimeout(client.ping(), "redis_ping");
+    return {
+      ok: pong === "PONG",
+      backend: RATE_LIMIT_BACKEND,
+      configured: true,
+      ping: pong,
+      message: pong === "PONG" ? "Redis is connected" : "Redis ping returned unexpected response"
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      backend: RATE_LIMIT_BACKEND,
+      configured: true,
+      error: err.message || String(err)
+    };
+  }
 }
 
 function applyMemoryRateLimit(key, limit, windowMs, now) {
@@ -840,6 +878,46 @@ function getTonAutoPayoutStatusSummary() {
     keys_dir_exists: keysDirExists,
     wallet_files: walletFiles.length,
     rpc_endpoint: TON_RPC_ENDPOINT || "auto:orbs-ton-access"
+  };
+}
+
+async function buildTonSignerReadinessReport() {
+  const signer = getTonAutoPayoutStatusSummary();
+  let rpc = {
+    ok: false,
+    configured: Boolean(TON_RPC_ENDPOINT),
+    endpoint: TON_RPC_ENDPOINT || "auto:orbs-ton-access"
+  };
+
+  if (TON_SIGNER_ENABLED) {
+    try {
+      const client = await withOpsTimeout(getTonSignerClient(), "ton_signer_client");
+      const masterchain = await withOpsTimeout(client.getMasterchainInfo(), "ton_masterchain_info");
+      rpc = {
+        ok: Boolean(masterchain?.last),
+        configured: Boolean(TON_RPC_ENDPOINT),
+        endpoint: TON_RPC_ENDPOINT || "auto:orbs-ton-access",
+        last_seqno: masterchain?.last?.seqno || null
+      };
+    } catch (err) {
+      rpc = {
+        ok: false,
+        configured: Boolean(TON_RPC_ENDPOINT),
+        endpoint: TON_RPC_ENDPOINT || "auto:orbs-ton-access",
+        error: err.message || String(err)
+      };
+    }
+  }
+
+  return {
+    ok: Boolean(TON_AUTO_PAYOUT_ENABLED && TON_SIGNER_ENABLED && signer.keys_dir_exists && signer.wallet_files > 0 && rpc.ok),
+    require_for_1_5m: REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M,
+    auto_payout_enabled: TON_AUTO_PAYOUT_ENABLED,
+    signer_enabled: TON_SIGNER_ENABLED,
+    signer,
+    rpc,
+    payout_amount_ton: Number(ACTIVATION_PAYOUT_TON),
+    gas_reserve_ton: Number(TON_PAYOUT_GAS_RESERVE)
   };
 }
 
@@ -2181,6 +2259,8 @@ function buildCapacityReadiness(scanner) {
   if (!scannerPoolOk) blockers.push(`At least ${CAPACITY_3M_MIN_SCANNER_WORKERS} scanner workers should be alive before 3M traffic.`);
   if (!scannerPool100xOk) blockers.push(`At least ${CAPACITY_100X_MIN_SCANNER_WORKERS} scanner workers should be alive before 100x traffic.`);
   if (!scannerPoolHyperscaleOk) blockers.push(`At least ${CAPACITY_HYPERSCALE_MIN_SCANNER_WORKERS} scanner workers should be alive before hyperscale traffic.`);
+  if (REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M && !TON_AUTO_PAYOUT_ENABLED) blockers.push("TON auto payout is required for 1.5M production traffic.");
+  if (REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M && !TON_SIGNER_ENABLED) blockers.push("TON signer is required for 1.5M production traffic.");
   if (!TON_AUTO_PAYOUT_ENABLED) warnings.push("TON auto payout is disabled; deposit scanning can work, but refund payout will require signer/RPC setup.");
   if (PAYMENT_SCAN_BATCH_SIZE < 500) warnings.push("PAYMENT_SCAN_BATCH_SIZE is below the current hyperscale baseline.");
   if (PAYMENT_SCAN_CONCURRENCY < 32) warnings.push("PAYMENT_SCAN_CONCURRENCY is below the current hyperscale baseline.");
@@ -2208,6 +2288,8 @@ function buildCapacityReadiness(scanner) {
       api_redis_ok: redisOk,
       api_scanner_disabled: apiMode ? PAYMENT_SCANNER_ENABLED === false : true,
       ton_auto_payout_enabled: TON_AUTO_PAYOUT_ENABLED,
+      ton_signer_enabled: TON_SIGNER_ENABLED,
+      require_ton_auto_payout_for_1_5m: REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M,
       request_timeout_ms: SERVER_REQUEST_TIMEOUT_MS,
       keep_alive_timeout_ms: SERVER_KEEP_ALIVE_TIMEOUT_MS,
       scan_batch_size: PAYMENT_SCAN_BATCH_SIZE,
@@ -2415,8 +2497,8 @@ function buildScaleContract(scanner, shards, walletCapacity, backlog) {
     { name: "wallet_capacity_audit", ok: walletAuditOk, required: true },
     { name: "wallets_available_for_target", ok: enoughWallets, required: true },
     { name: "scanner_backlog_audit", ok: backlogAuditOk, required: true },
-    { name: "ton_auto_payout", ok: TON_AUTO_PAYOUT_ENABLED, required: false },
-    { name: "ton_signer", ok: TON_SIGNER_ENABLED, required: false }
+    { name: "ton_auto_payout", ok: TON_AUTO_PAYOUT_ENABLED, required: REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M },
+    { name: "ton_signer", ok: TON_SIGNER_ENABLED, required: REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M }
   ];
   const blockers = checks.filter((item) => item.required && !item.ok).map((item) => item.name);
   const warnings = checks.filter((item) => !item.required && !item.ok).map((item) => item.name);
@@ -3184,16 +3266,64 @@ app.get("/ops/wallet-capacity", async (req, res) => {
   }
 });
 
+app.get("/ops/redis", async (req, res) => {
+  try {
+    const redis = await checkRedisHealth();
+    res.json({
+      status: redis.ok ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      redis
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/ton-signer", async (req, res) => {
+  try {
+    const ton_signer = await buildTonSignerReadinessReport();
+    res.json({
+      status: ton_signer.ok ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      ton_signer
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
 app.get("/ops/scale-contract", async (req, res) => {
   try {
     const scannerHeartbeats = await readPaymentScannerHeartbeats();
     const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog] = await Promise.all([
+    const [walletCapacity, backlog, redis, tonSigner] = await Promise.all([
       buildWalletCapacityReport(),
-      buildScannerBacklogReport()
+      buildScannerBacklogReport(),
+      checkRedisHealth(),
+      buildTonSignerReadinessReport()
     ]);
     const shards = buildScannerShardReport(scannerHeartbeats);
     const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
+    if (!redis.ok && !contract.blockers.includes("redis_ping")) {
+      contract.blockers.push("redis_ping");
+      contract.checks.push({ name: "redis_ping", ok: false, required: true });
+      contract.status = "blocked";
+    }
+    if (REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M && !tonSigner.ok && !contract.blockers.includes("ton_signer_readiness")) {
+      contract.blockers.push("ton_signer_readiness");
+      contract.checks.push({ name: "ton_signer_readiness", ok: false, required: true });
+      contract.status = "blocked";
+    }
     res.json({
       status: contract.status,
       version: BACKEND_VERSION,
@@ -3201,6 +3331,8 @@ app.get("/ops/scale-contract", async (req, res) => {
       contract,
       scanner,
       shards,
+      redis,
+      ton_signer: tonSigner,
       wallet_capacity: walletCapacity,
       backlog
     });

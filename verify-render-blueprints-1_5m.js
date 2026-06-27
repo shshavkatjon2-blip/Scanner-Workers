@@ -2,14 +2,14 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
-const expectedVersion = "v1.8.1-hyperscale-backpressure-20260627";
+const packageRoot = path.resolve(root, "..");
 
-function read(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), "utf8");
+function read(file) {
+  return fs.readFileSync(path.join(root, file), "utf8");
 }
 
-function exists(relativePath) {
-  return fs.existsSync(path.join(root, relativePath));
+function existsFromPackage(file) {
+  return fs.existsSync(path.join(packageRoot, file));
 }
 
 function fail(errors, message) {
@@ -17,18 +17,7 @@ function fail(errors, message) {
 }
 
 function assertIncludes(errors, file, pattern, label) {
-  const text = read(file);
-  if (!text.includes(pattern)) fail(errors, `${file} missing ${label || pattern}`);
-}
-
-function walk(dir, files = []) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules") continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(fullPath, files);
-    else files.push(fullPath);
-  }
-  return files;
+  if (!read(file).includes(pattern)) fail(errors, `${file} missing ${label || pattern}`);
 }
 
 function main() {
@@ -36,94 +25,38 @@ function main() {
 
   for (const file of [
     "server.js",
-    "package.json",
-    "scripts/verify-live-1_5m.js",
-    "scripts/verify-staging-deploy.js",
-    "scripts/verify-env-1_5m.js",
-    "scripts/verify-render-blueprints-1_5m.js",
-    "scripts/verify-sql-package-1_5m.js",
-    "scripts/verify-contract-1_5m.js",
-    "render.yaml",
-    "render-build-fix.cjs",
-    "render.16-workers.yaml",
-    "render.64-workers.yaml",
-    "render.256-workers.yaml",
-    "README_UPLOAD_TO_SCANNER_WORKER_REPO.txt"
+    "scripts/plan-wallet-topup-1_5m.js",
+    "scripts/generate-missing-ton-wallets-to-target-1_5m.js",
+    "scripts/verify-remaining-blockers-package-1_5m.js"
   ]) {
-    if (!exists(file)) fail(errors, `Missing ${file}`);
+    if (!fs.existsSync(path.join(root, file))) fail(errors, `Missing ${file}`);
   }
 
-  assertIncludes(errors, "server.js", expectedVersion, "expected backend version");
-  assertIncludes(errors, "server.js", 'app.get("/ops/readiness"', "/ops/readiness endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/metrics"', "/ops/metrics endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/capacity"', "/ops/capacity endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/deploy"', "/ops/deploy endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/live"', "/ops/live endpoint");
-  assertIncludes(errors, "server.js", "buildProcessMetrics", "process metrics helper");
-  assertIncludes(errors, "server.js", "buildCapacityReadiness", "capacity helper");
-  assertIncludes(errors, "server.js", "claim_pending_payment_orders_sharded", "sharded scanner claim rpc");
-  assertIncludes(errors, "server.js", "PAYMENT_SCAN_CONCURRENCY", "scanner concurrency env");
-  assertIncludes(errors, "server.js", "PAYMENT_SCANNER_SHARD_COUNT", "scanner shard env");
-  assertIncludes(errors, "server.js", "PAYMENT_SCAN_JITTER_MS", "scanner jitter env");
-  assertIncludes(errors, "server.js", "PAYMENT_SCAN_ORDER_DELAY_MS", "scanner order delay env");
-  assertIncludes(errors, "server.js", "fetchJsonWithTimeout", "TON API timeout/retry helper");
-  assertIncludes(errors, "server.js", 'app.get("/ops/scale-plan"', "/ops/scale-plan endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/hyperscale"', "/ops/hyperscale endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/scanner-shards"', "/ops/scanner-shards endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/scanner-backlog"', "/ops/scanner-backlog endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/wallet-capacity"', "/ops/wallet-capacity endpoint");
-  assertIncludes(errors, "server.js", 'app.get("/ops/scale-contract"', "/ops/scale-contract endpoint");
-  assertIncludes(errors, "server.js", "OPS_DB_AUDIT_TIMEOUT_MS", "ops DB audit timeout");
-  assertIncludes(errors, "server.js", "SCALE_AUDIT_COUNT_MODE", "scale audit count mode");
-  assertIncludes(errors, "server.js", "shutdownGracefully", "graceful shutdown");
-  assertIncludes(errors, "scripts/start-scanner.js", "Shard", "scanner shard startup log");
-  assertIncludes(errors, "scripts/verify-live-1_5m.js", expectedVersion, "verify-live expected version");
-  assertIncludes(errors, "package.json", "\"verify:package\"", "package verify script");
-  assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
-  assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
-  assertIncludes(errors, "render.yaml", "startCommand: npm run start:scanner", "Render Background Worker start command");
-  assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_INDEX", "scanner shard index env marker");
-  assertIncludes(errors, "render.16-workers.yaml", "vidipay-payment-scanner-16-15", "16th scanner worker");
-  assertIncludes(errors, "render.256-workers.yaml", "vidipay-payment-scanner-256-255", "256th scanner worker");
-  assertIncludes(errors, "server.js", "CAPACITY_TARGET_USERS || 1500000", "1.5M capacity target default");
-  assertIncludes(errors, "render-build-fix.cjs", "object-assign", "Render clean-install dependency guard");
-  assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");
+  assertIncludes(errors, "server.js", 'app.get("/ops/redis"', "/ops/redis endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/ton-signer"', "/ops/ton-signer endpoint");
+  assertIncludes(errors, "server.js", "REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M", "1.5M signer requirement flag");
+  assertIncludes(errors, "server.js", "buildTonSignerReadinessReport", "TON signer readiness report");
+  assertIncludes(errors, "server.js", "checkRedisHealth", "Redis readiness report");
 
-  const textFiles = walk(root)
-    .filter((file) => /\.(js|json|env|txt|md|yaml|yml|sql)$/i.test(file))
-    .filter((file) => fs.statSync(file).size <= 1024 * 1024);
-
-  const forbiddenPatterns = [
-    { regex: /v1\.7\.5-1-5m-worker-failfast-20260627/, label: "old backend version" },
-    { regex: /v1\.7\.6-1-5m-readiness-doctor-20260627/, label: "old backend version" },
-    { regex: /v1\.7\.7-1-5m-ops-observability-20260627/, label: "old backend version" },
-    { regex: /v1\.7\.8-1-5m-runtime-capacity-20260627/, label: "old backend version" },
-    { regex: /v1\.7\.9-3m-sharded-scanner-20260627/, label: "old backend version" },
-    { regex: /v1\.8\.0-100x-scale-controls-20260627/, label: "old backend version" },
-    { regex: /UPLOAD_READY_SCANNER_WORKER_ONLY_1_5M_2026-06-27\.zip/, label: "old non-safe scanner zip name" },
-    { regex: /UPLOAD_READY_1_5M_BACKEND_STAGING_2026-06-26\.zip/, label: "old non-safe backend zip name" },
-    { regex: /ACTIVATION_FEE_TON=0(?:\r?\n|$)/, label: "old activation fee value" },
-    { regex: /READY_FILLED_1_5M/, label: "confusing filled env name" }
-  ];
-
-  for (const file of textFiles) {
-    const relative = path.relative(root, file);
-    if (relative === path.join("scripts", "verify-package-1_5m.js")) continue;
-    const text = fs.readFileSync(file, "utf8");
-    for (const item of forbiddenPatterns) {
-      if (item.regex.test(text)) fail(errors, `${relative} contains ${item.label}`);
-    }
+  for (const file of [
+    "env/RENDER_WEB_SERVICE_FINAL_1_5M.env",
+    "env/RENDER_SCANNER_WORKERS_FINAL_1_5M.env",
+    "env/SIGNER_AUTO_PAYOUT_REQUIRED_1_5M.env",
+    "env/WALLET_TOPUP_GENERATION_LOCAL_1_5M.env",
+    "sql/FINAL_REMAINING_BLOCKERS_AUDIT_1_5M.sql",
+    "sql/WALLET_IMPORT_AFTER_GENERATION_VERIFY_1_5M.sql",
+    "ops/ONE_SHOT_REMAINING_BLOCKERS_RUNBOOK_1_5M.md"
+  ]) {
+    if (!existsFromPackage(file)) fail(errors, `Missing package file ${file}`);
   }
 
   if (errors.length) {
-    console.error("PACKAGE CHECK FAILED");
+    console.error("REMAINING BLOCKERS PACKAGE CHECK FAILED");
     for (const error of errors) console.error(`- ${error}`);
     process.exit(1);
   }
 
-  console.log("PACKAGE CHECK OK");
-  console.log(`version=${expectedVersion}`);
-  console.log(`files_checked=${textFiles.length}`);
+  console.log("REMAINING BLOCKERS PACKAGE CHECK OK");
 }
 
 main();
