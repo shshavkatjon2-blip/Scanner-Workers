@@ -44,9 +44,12 @@ function main() {
     "scripts/verify-sql-package-1_5m.js",
     "scripts/verify-contract-1_5m.js",
     "scripts/verify-hyperscale-operations-package-1_5m.js",
+    "scripts/verify-control-tower-package-1_5m.js",
     "scripts/verify-live-ops-1_5m.js",
+    "scripts/diagnose-live-control-tower-1_5m.js",
     "scripts/generate-wallet-import-manifest-1_5m.js",
     "scripts/generate-scanner-shard-env-matrix-1_5m.js",
+    "scripts/generate-render-env-bundle-1_5m.js",
     "render.yaml",
     "render-build-fix.cjs"
   ]) {
@@ -84,8 +87,15 @@ function main() {
   assertIncludes(errors, "server.js", 'app.get("/ops/redis-deep"', "/ops/redis-deep endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/scale-contract"', "/ops/scale-contract endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/launch-checklist"', "/ops/launch-checklist endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/snapshot"', "/ops/snapshot endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/control-tower"', "/ops/control-tower endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/env-contract"', "/ops/env-contract endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/scanner-worker-plan"', "/ops/scanner-worker-plan endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/blocker-actions"', "/ops/blocker-actions endpoint");
   assertIncludes(errors, "server.js", "OPS_DB_AUDIT_TIMEOUT_MS", "ops DB audit timeout");
   assertIncludes(errors, "server.js", "SCALE_AUDIT_COUNT_MODE", "scale audit count mode");
+  assertIncludes(errors, "server.js", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit");
+  assertIncludes(errors, "server.js", "OPS_SNAPSHOT_CACHE_TTL_MS", "ops snapshot cache");
   assertIncludes(errors, "server.js", "REDIS_SCANNER_LOCKS_ENABLED", "scanner Redis locks");
   assertIncludes(errors, "server.js", "checkRedisDeepHealth", "Redis deep check");
   assertIncludes(errors, "server.js", "buildWalletImportPlan", "wallet import plan");
@@ -93,6 +103,8 @@ function main() {
   assertIncludes(errors, "scripts/verify-live-1_5m.js", expectedVersion, "verify-live expected version");
   assertIncludes(errors, "package.json", "\"verify:package\"", "package verify script");
   assertIncludes(errors, "package.json", "\"verify:ops\"", "ops verify script");
+  assertIncludes(errors, "package.json", "\"verify:control-tower\"", "control tower verify script");
+  assertIncludes(errors, "package.json", "\"diagnose:live\"", "live diagnose script");
   assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
   if (isWorkerPackage) {
     assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
@@ -105,6 +117,7 @@ function main() {
   assertIncludes(errors, "server.js", "CAPACITY_TARGET_USERS || 1500000", "1.5M capacity target default");
   assertIncludes(errors, "render-build-fix.cjs", "object-assign", "Render clean-install dependency guard");
   assertIncludes(errors, "render-build-fix.cjs", "\"verify:ops\"", "Render build ops verify script");
+  assertIncludes(errors, "render-build-fix.cjs", "\"verify:control-tower\"", "Render build control tower verify script");
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");
 
   const textFiles = walk(root)

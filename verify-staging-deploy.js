@@ -49,6 +49,7 @@ function main() {
     "FINAL_OPERATIONAL_GATE_1_5M.sql",
     "WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql",
     "SCANNER_WORKER_OPERATIONS_AUDIT_1_5M.sql",
+    "CONTROL_TOWER_SQL_AUDIT_1_5M.sql",
     "RUN_SQL_IN_THIS_ORDER_1_5M.txt"
   ]) {
     assertFile(errors, file);
@@ -66,6 +67,7 @@ function main() {
     assertIncludes(errors, "FINAL_OPERATIONAL_GATE_1_5M.sql", "vidipay_operational_gate_1_5m", "final operational gate");
     assertIncludes(errors, "WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql", "wallet_import_batches_summary", "wallet import manifest audit");
     assertIncludes(errors, "SCANNER_WORKER_OPERATIONS_AUDIT_1_5M.sql", "scanner_live_summary", "scanner worker operations audit");
+    assertIncludes(errors, "CONTROL_TOWER_SQL_AUDIT_1_5M.sql", "wallet_capacity_ready", "control tower SQL audit");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "POST_DEPLOY_VERIFY_1_5M.sql", "post deploy verify order");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "SCALE_CONTRACT_AUDIT_1_5M.sql", "scale contract run order");
   }

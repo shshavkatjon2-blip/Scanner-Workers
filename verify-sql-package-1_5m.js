@@ -48,6 +48,8 @@ function main() {
     assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_ENABLED", "API scanner disabled marker");
     assertIncludes(errors, "render.yaml", "RATE_LIMIT_BACKEND", "API Redis rate-limit marker");
     assertIncludes(errors, "render.yaml", "CAPACITY_TARGET_USERS", "1.5M target env marker");
+    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit marker");
+    assertIncludes(errors, "render.yaml", "OPS_SNAPSHOT_CACHE_TTL_MS", "ops snapshot cache marker");
   }
 
   if (isWorker) {
@@ -55,8 +57,10 @@ function main() {
     assertIncludes(errors, "render.yaml", "WORKER_MODE", "scanner worker mode env");
     assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_COUNT", "scanner shard count env");
     assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_INDEX", "scanner shard index env");
+    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit env");
     for (const file of ["render.4-workers.yaml", "render.16-workers.yaml", "render.64-workers.yaml", "render.256-workers.yaml"]) {
       assertIncludes(errors, file, "startCommand: npm run start:scanner", `${file} scanner start command`);
+      assertIncludes(errors, file, "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", `${file} scanner heartbeat read limit`);
       assertNotIncludes(errors, file, "npm ci", `${file} npm ci`);
     }
     const blueprint16 = exists("render.16-workers.yaml") ? read("render.16-workers.yaml") : "";

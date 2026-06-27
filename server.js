@@ -115,6 +115,8 @@ const PAYMENT_SCAN_MAX_ERRORS_PER_RUN = Math.max(1, Math.min(10000, Number(proce
 const PAYMENT_SCANNER_SHARD_COUNT = Math.max(1, Math.min(2048, Number(process.env.PAYMENT_SCANNER_SHARD_COUNT || 1)));
 const PAYMENT_SCANNER_SHARD_INDEX = Math.max(0, Math.min(PAYMENT_SCANNER_SHARD_COUNT - 1, Number(process.env.PAYMENT_SCANNER_SHARD_INDEX || 0)));
 const PAYMENT_SCANNER_STALE_AFTER_MS = Math.max(30000, Number(process.env.PAYMENT_SCANNER_STALE_AFTER_MS || PAYMENT_SCAN_INTERVAL_MS * 8));
+const PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT = Math.max(20, Math.min(2048, Number(process.env.PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT || 512)));
+const OPS_SNAPSHOT_CACHE_TTL_MS = Math.max(0, Math.min(30000, Number(process.env.OPS_SNAPSHOT_CACHE_TTL_MS || 2000)));
 const TONAPI_REQUEST_TIMEOUT_MS = Math.max(1000, Math.min(60000, Number(process.env.TONAPI_REQUEST_TIMEOUT_MS || 12000)));
 const TONAPI_RETRY_COUNT = Math.max(0, Math.min(5, Number(process.env.TONAPI_RETRY_COUNT || 2)));
 const TONAPI_RETRY_BASE_MS = Math.max(50, Math.min(10000, Number(process.env.TONAPI_RETRY_BASE_MS || 250)));
@@ -2037,6 +2039,11 @@ const paymentScannerState = {
   checked: 0,
   confirmed: 0
 };
+const opsSnapshotCache = {
+  value: null,
+  expiresAt: 0,
+  generatedAt: null
+};
 const PAYMENT_SCANNER_WORKER_ID = String(process.env.PAYMENT_SCANNER_WORKER_ID || `scanner-${Math.random().toString(36).slice(2)}`);
 const PAYMENT_SCANNER_HEARTBEAT_TABLE = "payment_scanner_heartbeats";
 let scannerHeartbeatWarned = false;
@@ -2110,7 +2117,7 @@ async function readPaymentScannerHeartbeats() {
     .eq("network", PAYMENT_NETWORK)
     .eq("token", PAYMENT_TOKEN)
     .order("last_seen_at", { ascending: false })
-    .limit(20);
+    .limit(PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT);
 
   if (error) {
     return {
@@ -2157,6 +2164,7 @@ function buildPaymentScannerStatus(heartbeatSnapshot = { available: false, error
     expected_min_scanner_workers: CAPACITY_3M_MIN_SCANNER_WORKERS,
     expected_min_scanner_workers_100x: CAPACITY_100X_MIN_SCANNER_WORKERS,
     expected_min_scanner_workers_hyperscale: CAPACITY_HYPERSCALE_MIN_SCANNER_WORKERS,
+    heartbeat_read_limit: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT,
     shard_count: PAYMENT_SCANNER_SHARD_COUNT,
     shard_index: PAYMENT_SCANNER_SHARD_INDEX,
     latest_heartbeat: latest,
@@ -2220,6 +2228,7 @@ function buildPublicPaymentScannerHealth(heartbeatSnapshot = { available: false,
     expected_min_scanner_workers: scannerStatus.expected_min_scanner_workers,
     expected_min_scanner_workers_100x: scannerStatus.expected_min_scanner_workers_100x,
     expected_min_scanner_workers_hyperscale: scannerStatus.expected_min_scanner_workers_hyperscale,
+    heartbeat_read_limit: scannerStatus.heartbeat_read_limit,
     latest_seen_at: latestScanner?.last_seen_at || null,
     latest_run_at: latestScanner?.last_run_at || null,
     last_error_present: Boolean(latestScanner?.last_error),
@@ -2427,6 +2436,8 @@ function buildCapacityReadiness(scanner) {
       keep_alive_timeout_ms: SERVER_KEEP_ALIVE_TIMEOUT_MS,
       scan_batch_size: PAYMENT_SCAN_BATCH_SIZE,
       scan_concurrency: PAYMENT_SCAN_CONCURRENCY,
+      scanner_heartbeat_read_limit: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT,
+      ops_snapshot_cache_ttl_ms: OPS_SNAPSHOT_CACHE_TTL_MS,
       scan_jitter_ms: PAYMENT_SCAN_JITTER_MS,
       scan_order_delay_ms: PAYMENT_SCAN_ORDER_DELAY_MS,
       tonapi_request_timeout_ms: TONAPI_REQUEST_TIMEOUT_MS,
@@ -2589,6 +2600,269 @@ function buildWalletImportPlan(walletCapacity) {
       "Run sql/FINAL_OPERATIONAL_GATE_1_5M.sql.",
       "Open /ops/wallet-capacity and /ops/final-gate."
     ]
+  };
+}
+
+function maskEnvValue(name) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return "";
+  if (/KEY|TOKEN|SECRET|URL|ENDPOINT|DIR/i.test(name)) return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+  return raw;
+}
+
+function envRequirement(name, options = {}) {
+  const real = hasRealEnvValue(name);
+  const expected = options.expected;
+  const actual = String(process.env[name] || "").trim();
+  const expectedOk = expected === undefined ? true : actual === String(expected);
+  return {
+    name,
+    ok: real && expectedOk,
+    present: real,
+    expected: expected === undefined ? null : String(expected),
+    value_preview: maskEnvValue(name),
+    required_for: options.required_for || "1.5M",
+    note: options.note || ""
+  };
+}
+
+function buildEnvContract() {
+  const api = [
+    envRequirement("SUPABASE_URL", { required_for: "api" }),
+    envRequirement("SUPABASE_SERVICE_ROLE_KEY", { required_for: "api" }),
+    envRequirement("ADMIN_TOKEN", { required_for: "api" }),
+    envRequirement("BOT_TOKEN", { required_for: "api" }),
+    envRequirement("TELEGRAM_WEBHOOK_SECRET", { required_for: "api" }),
+    envRequirement("TONAPI_KEY", { required_for: "api" }),
+    envRequirement("PUBLIC_BACKEND_URL", { required_for: "api" }),
+    envRequirement("PUBLIC_APP_URL", { required_for: "api" })
+  ];
+  const redis = [
+    envRequirement("RATE_LIMIT_BACKEND", { expected: "redis", required_for: "api" }),
+    envRequirement("REDIS_URL", { required_for: "api" }),
+    envRequirement("REDIS_DEEP_CHECK_ENABLED", { expected: "true", required_for: "api" })
+  ];
+  const scannerTemplate = [
+    envRequirement("SUPABASE_URL", { required_for: "scanner" }),
+    envRequirement("SUPABASE_SERVICE_ROLE_KEY", { required_for: "scanner" }),
+    envRequirement("TONAPI_KEY", { required_for: "scanner" }),
+    envRequirement("TONAPI_BASE_URL", { required_for: "scanner" }),
+    envRequirement("WORKER_MODE", { expected: "scanner", required_for: "scanner" }),
+    envRequirement("PAYMENT_SCANNER_ENABLED", { expected: "true", required_for: "scanner" }),
+    envRequirement("PAYMENT_SCANNER_WORKER_ID", { required_for: "scanner" }),
+    envRequirement("PAYMENT_SCANNER_SHARD_COUNT", { required_for: "scanner" }),
+    envRequirement("PAYMENT_SCANNER_SHARD_INDEX", { required_for: "scanner" }),
+    envRequirement("REDIS_SCANNER_LOCKS_ENABLED", { expected: "true", required_for: "scanner" })
+  ];
+  const signer = [
+    envRequirement("TON_AUTO_PAYOUT_ENABLED", { expected: "true", required_for: "signer" }),
+    envRequirement("TON_SIGNER_ENABLED", { expected: "true", required_for: "signer" }),
+    envRequirement("TON_SIGNER_KEYS_DIR", { required_for: "signer" }),
+    envRequirement("TON_RPC_ENDPOINT", { required_for: "signer" }),
+    envRequirement("TON_RPC_API_KEY", { required_for: "signer" })
+  ];
+  const groups = { api, redis, scanner_template: scannerTemplate, signer };
+  const flat = SCANNER_WORKER_MODE
+    ? scannerTemplate
+    : [...api, ...redis, ...signer];
+  const blockers = flat.filter((item) => !item.ok);
+  return {
+    status: blockers.length ? "blocked" : "ready",
+    worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+    groups,
+    blockers,
+    generated_at: new Date().toISOString()
+  };
+}
+
+function buildScannerWorkerPlan(scanner, shards) {
+  const alive = Number(scanner?.scanner_workers_alive || 0);
+  const currentShardCount = Math.max(1, Number(shards?.expected_shard_count || PAYMENT_SCANNER_SHARD_COUNT || 1));
+  const missingShards = Array.isArray(shards?.missing_shard_sample) ? shards.missing_shard_sample : [];
+  const duplicateShards = Array.isArray(shards?.duplicate_shards) ? shards.duplicate_shards : [];
+  const stages = [
+    { name: "smoke", workers: 4, purpose: "real deposit test and minimum gate" },
+    { name: "baseline_1_5m", workers: 16, purpose: "first 1.5M traffic baseline" },
+    { name: "high_load", workers: 64, purpose: "higher backlog and TonAPI pressure" },
+    { name: "future_hyperscale", workers: 256, purpose: "future expansion ceiling" }
+  ];
+  return {
+    status: alive >= FINAL_GATE_MIN_SCANNER_WORKERS && duplicateShards.length === 0 ? "ready" : "action_required",
+    current: {
+      workers_alive: alive,
+      workers_seen: Number(scanner?.scanner_workers_seen || 0),
+      shard_count: currentShardCount,
+      duplicate_shards: duplicateShards.length,
+      missing_shard_sample: missingShards.slice(0, 50),
+      heartbeat_read_limit: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
+    },
+    required_now: {
+      min_workers: FINAL_GATE_MIN_SCANNER_WORKERS,
+      recommended_stage: "smoke",
+      missing_workers: Math.max(0, FINAL_GATE_MIN_SCANNER_WORKERS - alive)
+    },
+    rollout_stages: stages,
+    files: {
+      scanner_matrix: "ops/scanner-shard-env-matrix-1_5m.txt",
+      render_4_workers: "scanner-workers/render.4-workers.yaml",
+      render_16_workers: "scanner-workers/render.16-workers.yaml",
+      render_64_workers: "scanner-workers/render.64-workers.yaml",
+      render_256_workers: "scanner-workers/render.256-workers.yaml"
+    }
+  };
+}
+
+function buildLaunchChecklistFromParts({ scanner, shards, walletCapacity, backlog, redis, redisDeep, tonSigner, gate }) {
+  const walletImportPlan = buildWalletImportPlan(walletCapacity);
+  const steps = [
+    { id: "web_service", ready: !SCANNER_WORKER_MODE, check: "Public API runs as Web Service with npm start." },
+    { id: "redis", ready: Boolean(redis?.ok && redisDeep?.ok), check: "RATE_LIMIT_BACKEND=redis, REDIS_URL set, ping/set/get/NX lock pass." },
+    { id: "scanner_workers", ready: Number(scanner?.scanner_workers_alive || 0) >= FINAL_GATE_MIN_SCANNER_WORKERS, check: `At least ${FINAL_GATE_MIN_SCANNER_WORKERS} scanner workers heartbeat fresh.` },
+    { id: "scanner_shards", ready: Array.isArray(shards?.duplicate_shards) && shards.duplicate_shards.length === 0, check: "No duplicate live scanner shard indexes." },
+    { id: "wallet_pool", ready: walletImportPlan.status === "ready", check: `${walletImportPlan.required_available_wallets} available TON wallets.` },
+    { id: "ton_signer", ready: Boolean(tonSigner?.ok), check: "TON signer enabled, keys dir mounted, RPC endpoint works." },
+    { id: "sql_backlog", ready: Boolean(backlog?.ok), check: "Payment order backlog audit is readable." },
+    { id: "final_gate", ready: gate?.status === "ready", check: "/ops/final-gate returns ready." }
+  ];
+  return {
+    status: steps.some((step) => !step.ready) ? "blocked" : "ready",
+    steps,
+    blockers: steps.filter((step) => !step.ready),
+    wallet_import_plan: walletImportPlan
+  };
+}
+
+function buildBlockerActions({ checklist, gate, envContract, scannerPlan }) {
+  const ids = new Set([
+    ...(Array.isArray(checklist?.blockers) ? checklist.blockers.map((item) => item.id) : []),
+    ...(Array.isArray(gate?.blockers) ? gate.blockers.map((item) => item.name) : []),
+    ...(Array.isArray(envContract?.blockers) ? envContract.blockers.map((item) => item.name) : [])
+  ]);
+  const actions = [];
+  if (ids.has("redis") || ids.has("redis_ready") || ids.has("redis_deep_ops_ready") || ids.has("REDIS_URL") || ids.has("RATE_LIMIT_BACKEND")) {
+    actions.push({
+      blocker: "redis",
+      do: "Set RATE_LIMIT_BACKEND=redis and REDIS_URL in Render Web Service env, then redeploy.",
+      files: ["env/REDIS_SCANNER_LOCKS_1_5M.env", "env/RENDER_1_5M_REQUIRED_ALL_NO_SECRETS.env"],
+      verify: ["/ops/redis", "/ops/redis-deep"]
+    });
+  }
+  if (ids.has("scanner_workers") || ids.has("scanner_workers_alive_minimum") || ids.has("scanner_heartbeat")) {
+    actions.push({
+      blocker: "scanner_workers",
+      do: `Deploy at least ${FINAL_GATE_MIN_SCANNER_WORKERS} Background Workers with unique shard indexes.`,
+      missing_workers: scannerPlan?.required_now?.missing_workers ?? null,
+      files: ["scanner-workers/render.4-workers.yaml", "ops/scanner-shard-env-matrix-1_5m.txt"],
+      verify: ["/scanner/healthz", "/ops/scanner-shards"]
+    });
+  }
+  if (ids.has("wallet_pool") || ids.has("wallet_capacity_1_5m") || ids.has("wallets_available_for_target")) {
+    actions.push({
+      blocker: "wallet_pool",
+      do: "Generate/import missing public TON wallet addresses until available wallets >= 1,500,000.",
+      files: ["sql/IMPORT_PROGRESS_TABLE_1_5M.sql", "sql/WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql", "sql/FINAL_OPERATIONAL_GATE_1_5M.sql"],
+      verify: ["/ops/wallet-import-plan", "/ops/wallet-capacity"]
+    });
+  }
+  if (ids.has("ton_signer") || ids.has("ton_signer_ready") || ids.has("ton_signer_readiness") || ids.has("TON_SIGNER_KEYS_DIR")) {
+    actions.push({
+      blocker: "ton_signer",
+      do: "Set TON_AUTO_PAYOUT_ENABLED=true, TON_SIGNER_ENABLED=true, mount TON_SIGNER_KEYS_DIR, set TON_RPC_ENDPOINT and TON_RPC_API_KEY.",
+      files: ["env/SIGNER_AUTO_PAYOUT_REQUIRED_1_5M.env", "env/RENDER_1_5M_REQUIRED_ALL_NO_SECRETS.env"],
+      verify: ["/ops/ton-signer"]
+    });
+  }
+  return {
+    status: actions.length ? "action_required" : "ready",
+    actions,
+    generated_at: new Date().toISOString()
+  };
+}
+
+async function buildOpsSnapshot({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && OPS_SNAPSHOT_CACHE_TTL_MS > 0 && opsSnapshotCache.value && opsSnapshotCache.expiresAt > now) {
+    return {
+      ...opsSnapshotCache.value,
+      cache: {
+        hit: true,
+        ttl_ms: OPS_SNAPSHOT_CACHE_TTL_MS,
+        generated_at: opsSnapshotCache.generatedAt
+      }
+    };
+  }
+
+  const scannerHeartbeats = await readPaymentScannerHeartbeats();
+  const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+  const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
+    buildWalletCapacityReport(),
+    buildScannerBacklogReport(),
+    checkRedisHealth(),
+    checkRedisDeepHealth(),
+    buildTonSignerReadinessReport()
+  ]);
+  const shards = buildScannerShardReport(scannerHeartbeats);
+  const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
+  const gate = buildFinalLaunchGate({
+    scanner,
+    shards,
+    walletCapacity,
+    backlog,
+    redis,
+    redisDeep,
+    tonSigner,
+    contract
+  });
+  const checklist = buildLaunchChecklistFromParts({
+    scanner,
+    shards,
+    walletCapacity,
+    backlog,
+    redis,
+    redisDeep,
+    tonSigner,
+    gate
+  });
+  const envContract = buildEnvContract();
+  const scannerPlan = buildScannerWorkerPlan(scanner, shards);
+  const blockerActions = buildBlockerActions({
+    checklist,
+    gate,
+    envContract,
+    scannerPlan
+  });
+
+  const snapshot = {
+    status: gate.status === "ready" && checklist.status === "ready" ? "ready" : "blocked",
+    version: BACKEND_VERSION,
+    worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+    target_users: CAPACITY_TARGET_USERS,
+    scanner,
+    shards,
+    redis,
+    redis_deep: redisDeep,
+    ton_signer: tonSigner,
+    wallet_capacity: walletCapacity,
+    backlog,
+    contract,
+    gate,
+    checklist,
+    env_contract: envContract,
+    scanner_worker_plan: scannerPlan,
+    blocker_actions: blockerActions,
+    generated_at: new Date().toISOString()
+  };
+
+  opsSnapshotCache.value = snapshot;
+  opsSnapshotCache.generatedAt = snapshot.generated_at;
+  opsSnapshotCache.expiresAt = now + OPS_SNAPSHOT_CACHE_TTL_MS;
+  return {
+    ...snapshot,
+    cache: {
+      hit: false,
+      ttl_ms: OPS_SNAPSHOT_CACHE_TTL_MS,
+      generated_at: snapshot.generated_at
+    }
   };
 }
 
@@ -3730,6 +4004,111 @@ app.get("/ops/launch-checklist", async (req, res) => {
       blockers,
       gate,
       wallet_import_plan: walletImportPlan
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/snapshot", async (req, res) => {
+  try {
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
+    res.json(snapshot);
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/control-tower", async (req, res) => {
+  try {
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
+    res.json({
+      status: snapshot.status,
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      target_users: CAPACITY_TARGET_USERS,
+      ready: snapshot.gate?.status === "ready" && snapshot.checklist?.status === "ready",
+      blockers: snapshot.blocker_actions?.actions || [],
+      gates: {
+        final_gate: snapshot.gate,
+        checklist: snapshot.checklist,
+        env_contract: snapshot.env_contract
+      },
+      plans: {
+        scanner_worker_plan: snapshot.scanner_worker_plan,
+        wallet_import_plan: snapshot.checklist?.wallet_import_plan
+      },
+      cache: snapshot.cache
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/env-contract", async (req, res) => {
+  try {
+    const env_contract = buildEnvContract();
+    res.json({
+      status: env_contract.status,
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      env_contract
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/scanner-worker-plan", async (req, res) => {
+  try {
+    const scannerHeartbeats = await readPaymentScannerHeartbeats();
+    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+    const shards = buildScannerShardReport(scannerHeartbeats);
+    const scanner_worker_plan = buildScannerWorkerPlan(scanner, shards);
+    res.json({
+      status: scanner_worker_plan.status,
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      scanner_worker_plan,
+      scanner,
+      shards
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/blocker-actions", async (req, res) => {
+  try {
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
+    res.json({
+      status: snapshot.blocker_actions?.status || "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      blocker_actions: snapshot.blocker_actions,
+      checklist: snapshot.checklist,
+      gate: snapshot.gate,
+      cache: snapshot.cache
     });
   } catch (err) {
     res.status(503).json({
