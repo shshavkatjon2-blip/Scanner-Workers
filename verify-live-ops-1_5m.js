@@ -1,5 +1,5 @@
 const DEFAULT_BASE_URL = "https://vidipay-backend.onrender.com";
-const EXPECTED_VERSION = "v1.8.1-hyperscale-backpressure-20260627";
+const EXPECTED_VERSION = "v1.8.2-infra-autopilot-20260628";
 const DEFAULT_TIMEOUT_MS = 15000;
 
 function readEnv(name, fallback = "") {

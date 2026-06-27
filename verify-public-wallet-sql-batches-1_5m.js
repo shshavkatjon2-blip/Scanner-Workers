@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
-const expectedVersion = "v1.8.1-hyperscale-backpressure-20260627";
+const expectedVersion = "v1.8.2-infra-autopilot-20260628";
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -51,8 +51,13 @@ function main() {
     "scripts/generate-scanner-shard-env-matrix-1_5m.js",
     "scripts/generate-render-env-bundle-1_5m.js",
     "scripts/generate-closeout-execution-kit-1_5m.js",
+    "scripts/generate-infra-autopilot-kit-1_5m.js",
+    "scripts/generate-scanner-worker-blueprints-1_5m.js",
+    "scripts/build-public-wallet-import-from-keys-dir-1_5m.js",
     "scripts/verify-render-env-file-1_5m.js",
     "scripts/verify-signer-keys-dir-1_5m.js",
+    "scripts/verify-infra-autopilot-package-1_5m.js",
+    "scripts/final-upload-audit-1_5m.js",
     "render.yaml",
     "render-build-fix.cjs"
   ]) {
@@ -95,6 +100,8 @@ function main() {
   assertIncludes(errors, "server.js", 'app.get("/ops/env-contract"', "/ops/env-contract endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/scanner-worker-plan"', "/ops/scanner-worker-plan endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/blocker-actions"', "/ops/blocker-actions endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/infra-autopilot"', "/ops/infra-autopilot endpoint");
+  assertIncludes(errors, "server.js", "buildInfraAutopilotPlan", "infra autopilot planner");
   assertIncludes(errors, "server.js", "OPS_DB_AUDIT_TIMEOUT_MS", "ops DB audit timeout");
   assertIncludes(errors, "server.js", "SCALE_AUDIT_COUNT_MODE", "scale audit count mode");
   assertIncludes(errors, "server.js", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit");
@@ -109,6 +116,11 @@ function main() {
   assertIncludes(errors, "package.json", "\"verify:control-tower\"", "control tower verify script");
   assertIncludes(errors, "package.json", "\"diagnose:live\"", "live diagnose script");
   assertIncludes(errors, "package.json", "\"closeout:kit\"", "closeout kit script");
+  assertIncludes(errors, "package.json", "\"ops:infra-autopilot\"", "infra autopilot script");
+  assertIncludes(errors, "package.json", "\"ops:scanner-blueprints\"", "scanner blueprint script");
+  assertIncludes(errors, "package.json", "\"wallets:public-import\"", "public wallet import script");
+  assertIncludes(errors, "package.json", "\"verify:infra-autopilot\"", "infra autopilot verifier script");
+  assertIncludes(errors, "package.json", "\"verify:upload-audit\"", "final upload audit script");
   assertIncludes(errors, "package.json", "\"verify:render-env-file\"", "render env file verifier script");
   assertIncludes(errors, "package.json", "\"verify:signer-keys\"", "signer keys verifier script");
   assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
@@ -125,6 +137,7 @@ function main() {
   assertIncludes(errors, "render-build-fix.cjs", "\"verify:ops\"", "Render build ops verify script");
   assertIncludes(errors, "render-build-fix.cjs", "\"verify:control-tower\"", "Render build control tower verify script");
   assertIncludes(errors, "render-build-fix.cjs", "\"closeout:kit\"", "Render build closeout kit script");
+  assertIncludes(errors, "render-build-fix.cjs", "\"ops:infra-autopilot\"", "Render build infra autopilot script");
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");
 
   const textFiles = walk(root)

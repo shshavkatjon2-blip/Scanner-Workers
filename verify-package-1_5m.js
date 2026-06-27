@@ -2,7 +2,7 @@ const http = require("http");
 const https = require("https");
 
 const baseUrl = String(process.argv[2] || process.env.PUBLIC_BACKEND_URL || "https://vidipay-backend.onrender.com").replace(/\/$/, "");
-const expectedVersion = "v1.8.1-hyperscale-backpressure-20260627";
+const expectedVersion = "v1.8.2-infra-autopilot-20260628";
 const timeoutMs = Math.max(3000, Number(process.env.LIVE_VERIFY_TIMEOUT_MS || 25000));
 
 function requestJson(url) {

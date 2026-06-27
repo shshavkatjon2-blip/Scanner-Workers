@@ -54,6 +54,8 @@ function main() {
     "PAYMENT_ORDER_TO_WALLET_LINK_AUDIT_1_5M.sql",
     "TON_DEPOSIT_REFUND_AUDIT_1_5M.sql",
     "CLOSEOUT_FINAL_SQL_AUDIT_1_5M.sql",
+    "INFRA_AUTOPILOT_SQL_GATE_1_5M.sql",
+    "WALLET_PUBLIC_IMPORT_STAGING_TEMPLATE_1_5M.sql",
     "RUN_SQL_IN_THIS_ORDER_1_5M.txt"
   ]) {
     assertFile(errors, file);
@@ -76,6 +78,8 @@ function main() {
     assertIncludes(errors, "PAYMENT_ORDER_TO_WALLET_LINK_AUDIT_1_5M.sql", "pending_order_wallet_status", "payment order wallet link audit");
     assertIncludes(errors, "TON_DEPOSIT_REFUND_AUDIT_1_5M.sql", "vidipay_ton_refund_audit_1_5m", "TON deposit refund audit");
     assertIncludes(errors, "CLOSEOUT_FINAL_SQL_AUDIT_1_5M.sql", "wallet_capacity_ready", "closeout final SQL audit");
+    assertIncludes(errors, "INFRA_AUTOPILOT_SQL_GATE_1_5M.sql", "vidipay_infra_autopilot_gate_1_5m", "infra autopilot SQL gate");
+    assertIncludes(errors, "WALLET_PUBLIC_IMPORT_STAGING_TEMPLATE_1_5M.sql", "wallet_import_batches", "public wallet import staging table");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "POST_DEPLOY_VERIFY_1_5M.sql", "post deploy verify order");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "SCALE_CONTRACT_AUDIT_1_5M.sql", "scale contract run order");
   }

@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-06-27T19:13:34.942Z",
-  "version": "v1.8.1-hyperscale-backpressure-20260627",
+  "version": "v1.8.2-infra-autopilot-20260628",
   "target_users": 1500000,
   "required_live_endpoints": [
     "/healthz",

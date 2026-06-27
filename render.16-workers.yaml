@@ -1,4 +1,4 @@
-﻿# VidiPay scanner worker blueprint (16 shards).
+# VidiPay scanner worker blueprint (16 shards).
 # Use 16 shards for 1.5M runtime. Use 4 for smoke, 64/256 for future larger traffic.
 services:
   - type: worker
@@ -33,7 +33,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -44,7 +45,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -90,7 +92,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -101,7 +104,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -147,7 +151,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -158,7 +163,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -204,7 +210,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -215,7 +222,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -261,7 +269,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -272,7 +281,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -318,7 +328,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -329,7 +340,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -375,7 +387,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -386,7 +399,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -432,7 +446,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -443,7 +458,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -489,7 +505,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -500,7 +517,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -546,7 +564,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -557,7 +576,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -603,7 +623,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -614,7 +635,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -660,7 +682,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -671,7 +694,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -717,7 +741,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -728,7 +753,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -774,7 +800,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -785,7 +812,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -831,7 +859,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -842,7 +871,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2
@@ -888,7 +918,8 @@ services:
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: 500
       - key: PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT
-        value: 512      - key: RATE_LIMIT_BACKEND
+        value: 512
+      - key: RATE_LIMIT_BACKEND
         value: memory
       - key: REDIS_URL
         sync: false
@@ -899,7 +930,8 @@ services:
       - key: REDIS_SCANNER_LOCKS_REQUIRED
         value: false
       - key: REDIS_SCANNER_LOCK_TTL_MS
-        value: 60000      - key: TONAPI_REQUEST_TIMEOUT_MS
+        value: 60000
+      - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
         value: 2

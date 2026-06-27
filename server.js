@@ -32,7 +32,7 @@ if (missingEnvs.length > 0) {
 
 const app = express();
 
-const BACKEND_VERSION = "v1.8.1-hyperscale-backpressure-20260627";
+const BACKEND_VERSION = "v1.8.2-infra-autopilot-20260628";
 const PROCESS_STARTED_AT = new Date();
 const REQUEST_SLOW_MS = Math.max(250, Number(process.env.REQUEST_SLOW_MS || 1500));
 const SERVER_KEEP_ALIVE_TIMEOUT_MS = Math.max(5000, Number(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS || 65000));
@@ -2194,7 +2194,7 @@ function getScannerRecommendedChecks(status) {
     "Confirm worker env has WORKER_MODE=scanner and PAYMENT_SCANNER_ENABLED=true.",
     "Confirm worker env has real SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TONAPI_KEY, and TONAPI_BASE_URL.",
     "Confirm worker uses the same Supabase project as the public API.",
-    "Open Render worker logs; v1.8.1 fails fast when required env or shard config is missing."
+    "Open Render worker logs; v1.8.2 fails fast when required env or shard config is missing."
   ];
 }
 
@@ -2779,6 +2779,93 @@ function buildBlockerActions({ checklist, gate, envContract, scannerPlan }) {
   };
 }
 
+function buildInfraAutopilotPlan(snapshot) {
+  const actionIds = new Set((snapshot?.blocker_actions?.actions || []).map((item) => item.blocker));
+  const walletPlan = snapshot?.checklist?.wallet_import_plan || buildWalletImportPlan(snapshot?.wallet_capacity);
+  const scannerPlan = snapshot?.scanner_worker_plan || {};
+  const phases = [
+    {
+      id: "redis",
+      title: "Render Web Service Redis",
+      ready: !actionIds.has("redis"),
+      upload_target: "vidipay-backend",
+      render_service_type: "Web Service",
+      do: "Set RATE_LIMIT_BACKEND=redis, REDIS_URL, REDIS_DEEP_CHECK_ENABLED=true, then redeploy the web service.",
+      files: [
+        "env/RENDER_WEB_SERVICE_INFRA_AUTOPILOT_1_5M.env",
+        "render-blueprints/vidipay-web-service-render.yaml"
+      ],
+      verify: ["/ops/redis", "/ops/redis-deep", "/ops/control-tower?fresh=true"]
+    },
+    {
+      id: "scanner_workers",
+      title: "Scanner Background Workers",
+      ready: !actionIds.has("scanner_workers"),
+      upload_target: "scanner worker repo",
+      render_service_type: "Background Worker",
+      do: `Start ${Math.max(FINAL_GATE_MIN_SCANNER_WORKERS, scannerPlan?.required_now?.min_workers || 4)} scanner workers first; move to 16 after smoke test.`,
+      files: [
+        "render-blueprints/scanner-workers-4.autopilot.yaml",
+        "render-blueprints/scanner-workers-16.autopilot.yaml",
+        "env/SCANNER_WORKER_ENV_MATRIX_4_16_64_INFRA_AUTOPILOT_1_5M.txt"
+      ],
+      verify: ["/scanner/healthz", "/ops/scanner-shards", "/ops/control-tower?fresh=true"]
+    },
+    {
+      id: "wallet_pool",
+      title: "1.5M Wallet Pool",
+      ready: !actionIds.has("wallet_pool"),
+      upload_target: "Supabase SQL Editor, public wallet SQL only",
+      render_service_type: "SQL import",
+      do: `Generate and import ${Math.max(0, walletPlan?.missing_wallets || 0)} missing public wallet addresses. Private keys stay offline.`,
+      files: [
+        "scripts/build-public-wallet-import-from-keys-dir-1_5m.js",
+        "sql/WALLET_PUBLIC_IMPORT_STAGING_TEMPLATE_1_5M.sql",
+        "sql/INFRA_AUTOPILOT_SQL_GATE_1_5M.sql"
+      ],
+      verify: ["/ops/wallet-import-plan", "/ops/wallet-capacity", "/ops/control-tower?fresh=true"]
+    },
+    {
+      id: "ton_signer",
+      title: "TON Signer And Auto Payout",
+      ready: !actionIds.has("ton_signer"),
+      upload_target: "protected signer/runtime env, never GitHub",
+      render_service_type: "Signer env",
+      do: "Mount TON_SIGNER_KEYS_DIR, set TON_RPC_ENDPOINT and TON_RPC_API_KEY, then enable TON_AUTO_PAYOUT_ENABLED=true.",
+      files: [
+        "env/TON_SIGNER_ENV_REQUIRED_1_5M.env",
+        "ops/TON_SIGNER_PAYOUT_CLOSEOUT_1_5M.md"
+      ],
+      verify: ["/ops/ton-signer", "/ops/final-gate"]
+    }
+  ];
+  const current = phases.find((phase) => !phase.ready) || null;
+  return {
+    status: current ? "action_required" : "ready",
+    ready: !current,
+    version: BACKEND_VERSION,
+    target_users: CAPACITY_TARGET_USERS,
+    current_phase: current,
+    phases,
+    live_verify_order: [
+      "/ops/infra-autopilot?fresh=true",
+      "/ops/control-tower?fresh=true",
+      "/ops/final-gate",
+      "/ops/redis-deep",
+      "/ops/scanner-shards",
+      "/ops/wallet-capacity",
+      "/ops/ton-signer"
+    ],
+    safety_rules: [
+      "Upload web-service zip only to vidipay-backend.",
+      "Upload scanner-workers zip only to scanner Background Worker repo.",
+      "Never upload private-keys, .env.local, node_modules, or package-lock.json.",
+      "Supabase receives public-address SQL only, not mnemonic or seed files."
+    ],
+    generated_at: new Date().toISOString()
+  };
+}
+
 async function buildOpsSnapshot({ force = false } = {}) {
   const now = Date.now();
   if (!force && OPS_SNAPSHOT_CACHE_TTL_MS > 0 && opsSnapshotCache.value && opsSnapshotCache.expiresAt > now) {
@@ -2850,8 +2937,10 @@ async function buildOpsSnapshot({ force = false } = {}) {
     env_contract: envContract,
     scanner_worker_plan: scannerPlan,
     blocker_actions: blockerActions,
+    infra_autopilot: null,
     generated_at: new Date().toISOString()
   };
+  snapshot.infra_autopilot = buildInfraAutopilotPlan(snapshot);
 
   opsSnapshotCache.value = snapshot;
   opsSnapshotCache.generatedAt = snapshot.generated_at;
@@ -2931,7 +3020,7 @@ function buildScaleContract(scanner, shards, walletCapacity, backlog) {
   const availableWallets = walletCapacity?.counts?.available_wallets?.count;
   const enoughWallets = typeof availableWallets === "number" ? availableWallets >= CAPACITY_TARGET_USERS : false;
   const checks = [
-    { name: "backend_version", ok: BACKEND_VERSION === "v1.8.1-hyperscale-backpressure-20260627", required: true },
+    { name: "backend_version", ok: BACKEND_VERSION === "v1.8.2-infra-autopilot-20260628", required: true },
     { name: "api_redis", ok: apiRedisOk, required: !SCANNER_WORKER_MODE },
     { name: "api_scanner_disabled", ok: SCANNER_WORKER_MODE ? true : PAYMENT_SCANNER_ENABLED === false, required: !SCANNER_WORKER_MODE },
     { name: "payment_range", ok: paymentRangeOk, required: true },
@@ -2963,7 +3052,7 @@ function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis,
   const required = [
     {
       name: "backend_version",
-      ok: BACKEND_VERSION === "v1.8.1-hyperscale-backpressure-20260627",
+      ok: BACKEND_VERSION === "v1.8.2-infra-autopilot-20260628",
       detail: BACKEND_VERSION
     },
     {
@@ -4044,7 +4133,8 @@ app.get("/ops/control-tower", async (req, res) => {
       },
       plans: {
         scanner_worker_plan: snapshot.scanner_worker_plan,
-        wallet_import_plan: snapshot.checklist?.wallet_import_plan
+        wallet_import_plan: snapshot.checklist?.wallet_import_plan,
+        infra_autopilot: snapshot.infra_autopilot
       },
       cache: snapshot.cache
     });
@@ -4107,6 +4197,27 @@ app.get("/ops/blocker-actions", async (req, res) => {
       worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
       blocker_actions: snapshot.blocker_actions,
       checklist: snapshot.checklist,
+      gate: snapshot.gate,
+      cache: snapshot.cache
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/infra-autopilot", async (req, res) => {
+  try {
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
+    res.json({
+      status: snapshot.infra_autopilot?.status || "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      infra_autopilot: snapshot.infra_autopilot,
+      blockers: snapshot.blocker_actions?.actions || [],
       gate: snapshot.gate,
       cache: snapshot.cache
     });

@@ -36,6 +36,8 @@ function main() {
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "node_modules cleanup guard");
   assertIncludes(errors, "render-build-fix.cjs", "package-lock.json", "package-lock cleanup guard");
   assertNotIncludes(errors, "render.yaml", "npm ci", "npm ci build command");
+  assertNotIncludes(errors, "render.yaml", "value: 512      - key", "glued YAML env row");
+  assertNotIncludes(errors, "render.yaml", "value: 60000      - key", "glued YAML env row");
 
   const render = exists("render.yaml") ? read("render.yaml") : "";
   const isWorker = render.includes("type: worker");
@@ -62,6 +64,8 @@ function main() {
       assertIncludes(errors, file, "startCommand: npm run start:scanner", `${file} scanner start command`);
       assertIncludes(errors, file, "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", `${file} scanner heartbeat read limit`);
       assertNotIncludes(errors, file, "npm ci", `${file} npm ci`);
+      assertNotIncludes(errors, file, "value: 512      - key", `${file} glued YAML env row`);
+      assertNotIncludes(errors, file, "value: 60000      - key", `${file} glued YAML env row`);
     }
     const blueprint16 = exists("render.16-workers.yaml") ? read("render.16-workers.yaml") : "";
     const serviceCount16 = countOccurrences(blueprint16, "type: worker");

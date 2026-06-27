@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, "..");
 const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
 
 const required = [
-  ["BACKEND_VERSION", "v1.8.1-hyperscale-backpressure-20260627"],
+  ["BACKEND_VERSION", "v1.8.2-infra-autopilot-20260628"],
   ["OPS_DB_AUDIT_TIMEOUT_MS", "OPS_DB_AUDIT_TIMEOUT_MS"],
   ["SCALE_AUDIT_COUNT_MODE", "SCALE_AUDIT_COUNT_MODE"],
   ["/ops/scanner-shards", 'app.get("/ops/scanner-shards"'],
@@ -22,6 +22,7 @@ const required = [
   ["/ops/env-contract", 'app.get("/ops/env-contract"'],
   ["/ops/scanner-worker-plan", 'app.get("/ops/scanner-worker-plan"'],
   ["/ops/blocker-actions", 'app.get("/ops/blocker-actions"'],
+  ["/ops/infra-autopilot", 'app.get("/ops/infra-autopilot"'],
   ["/ops/scale-contract", 'app.get("/ops/scale-contract"'],
   ["redis health helper", "checkRedisHealth"],
   ["redis deep health helper", "checkRedisDeepHealth"],
@@ -54,4 +55,4 @@ if (errors.length) {
 }
 
 console.log("SCALE CONTRACT CHECK OK");
-console.log("endpoints=/ops/scanner-shards,/ops/scanner-backlog,/ops/wallet-capacity,/ops/wallet-import-plan,/ops/redis,/ops/redis-deep,/ops/ton-signer,/ops/final-gate,/ops/launch-checklist,/ops/snapshot,/ops/control-tower,/ops/env-contract,/ops/scanner-worker-plan,/ops/blocker-actions,/ops/scale-contract");
+console.log("endpoints=/ops/scanner-shards,/ops/scanner-backlog,/ops/wallet-capacity,/ops/wallet-import-plan,/ops/redis,/ops/redis-deep,/ops/ton-signer,/ops/final-gate,/ops/launch-checklist,/ops/snapshot,/ops/control-tower,/ops/env-contract,/ops/scanner-worker-plan,/ops/blocker-actions,/ops/infra-autopilot,/ops/scale-contract");
