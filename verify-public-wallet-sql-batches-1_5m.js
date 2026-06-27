@@ -43,14 +43,22 @@ function main() {
     "scripts/verify-render-blueprints-1_5m.js",
     "scripts/verify-sql-package-1_5m.js",
     "scripts/verify-contract-1_5m.js",
+    "scripts/verify-hyperscale-operations-package-1_5m.js",
+    "scripts/verify-live-ops-1_5m.js",
+    "scripts/generate-wallet-import-manifest-1_5m.js",
+    "scripts/generate-scanner-shard-env-matrix-1_5m.js",
     "render.yaml",
-    "render-build-fix.cjs",
-    "render.16-workers.yaml",
-    "render.64-workers.yaml",
-    "render.256-workers.yaml",
-    "README_UPLOAD_TO_SCANNER_WORKER_REPO.txt"
+    "render-build-fix.cjs"
   ]) {
     if (!exists(file)) fail(errors, `Missing ${file}`);
+  }
+
+  const renderText = exists("render.yaml") ? read("render.yaml") : "";
+  const isWorkerPackage = renderText.includes("type: worker");
+  if (isWorkerPackage) {
+    if (!exists("README_UPLOAD_TO_SCANNER_WORKER_REPO.txt")) fail(errors, "Missing README_UPLOAD_TO_SCANNER_WORKER_REPO.txt");
+  } else if (!exists("README_UPLOAD_TO_VIDIPAY_BACKEND_REPO.txt")) {
+    fail(errors, "Missing README_UPLOAD_TO_VIDIPAY_BACKEND_REPO.txt");
   }
 
   assertIncludes(errors, "server.js", expectedVersion, "expected backend version");
@@ -72,21 +80,31 @@ function main() {
   assertIncludes(errors, "server.js", 'app.get("/ops/scanner-shards"', "/ops/scanner-shards endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/scanner-backlog"', "/ops/scanner-backlog endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/wallet-capacity"', "/ops/wallet-capacity endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/wallet-import-plan"', "/ops/wallet-import-plan endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/redis-deep"', "/ops/redis-deep endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/scale-contract"', "/ops/scale-contract endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/launch-checklist"', "/ops/launch-checklist endpoint");
   assertIncludes(errors, "server.js", "OPS_DB_AUDIT_TIMEOUT_MS", "ops DB audit timeout");
   assertIncludes(errors, "server.js", "SCALE_AUDIT_COUNT_MODE", "scale audit count mode");
+  assertIncludes(errors, "server.js", "REDIS_SCANNER_LOCKS_ENABLED", "scanner Redis locks");
+  assertIncludes(errors, "server.js", "checkRedisDeepHealth", "Redis deep check");
+  assertIncludes(errors, "server.js", "buildWalletImportPlan", "wallet import plan");
   assertIncludes(errors, "server.js", "shutdownGracefully", "graceful shutdown");
-  assertIncludes(errors, "scripts/start-scanner.js", "Shard", "scanner shard startup log");
   assertIncludes(errors, "scripts/verify-live-1_5m.js", expectedVersion, "verify-live expected version");
   assertIncludes(errors, "package.json", "\"verify:package\"", "package verify script");
+  assertIncludes(errors, "package.json", "\"verify:ops\"", "ops verify script");
   assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
-  assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
-  assertIncludes(errors, "render.yaml", "startCommand: npm run start:scanner", "Render Background Worker start command");
-  assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_INDEX", "scanner shard index env marker");
-  assertIncludes(errors, "render.16-workers.yaml", "vidipay-payment-scanner-16-15", "16th scanner worker");
-  assertIncludes(errors, "render.256-workers.yaml", "vidipay-payment-scanner-256-255", "256th scanner worker");
+  if (isWorkerPackage) {
+    assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
+    assertIncludes(errors, "render.yaml", "startCommand: npm run start:scanner", "Render Background Worker start command");
+  } else {
+    assertIncludes(errors, "render.yaml", "type: web", "Render Web Service type");
+    assertIncludes(errors, "render.yaml", "startCommand: npm start", "Render Web Service start command");
+  }
+  assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_ENABLED", "scanner disabled env marker");
   assertIncludes(errors, "server.js", "CAPACITY_TARGET_USERS || 1500000", "1.5M capacity target default");
   assertIncludes(errors, "render-build-fix.cjs", "object-assign", "Render clean-install dependency guard");
+  assertIncludes(errors, "render-build-fix.cjs", "\"verify:ops\"", "Render build ops verify script");
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");
 
   const textFiles = walk(root)

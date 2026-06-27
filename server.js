@@ -346,14 +346,21 @@ function requireFields(body, fields) {
 
 const RATE_LIMIT_BACKEND = String(process.env.RATE_LIMIT_BACKEND || "memory").trim().toLowerCase();
 const REDIS_URL = String(process.env.REDIS_URL || "").trim();
+const REDIS_SCANNER_LOCKS_ENABLED = process.env.REDIS_SCANNER_LOCKS_ENABLED === "true";
+const REDIS_SCANNER_LOCKS_REQUIRED = process.env.REDIS_SCANNER_LOCKS_REQUIRED === "true";
+const REDIS_SCANNER_LOCK_TTL_MS = Math.max(5000, Math.min(300000, Number(process.env.REDIS_SCANNER_LOCK_TTL_MS || 60000)));
+const REDIS_DEEP_CHECK_ENABLED = process.env.REDIS_DEEP_CHECK_ENABLED !== "false";
 const OPS_DB_AUDIT_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.env.OPS_DB_AUDIT_TIMEOUT_MS || 8000)));
 const SCALE_AUDIT_COUNT_MODE = ["exact", "planned", "estimated"].includes(String(process.env.SCALE_AUDIT_COUNT_MODE || "").trim().toLowerCase())
   ? String(process.env.SCALE_AUDIT_COUNT_MODE).trim().toLowerCase()
   : "planned";
 const REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M = process.env.REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M !== "false";
+const FINAL_GATE_MIN_SCANNER_WORKERS = Math.max(1, Math.min(2048, Number(process.env.FINAL_GATE_MIN_SCANNER_WORKERS || CAPACITY_3M_MIN_SCANNER_WORKERS)));
+const WALLET_POOL_BUFFER = Math.max(0, Math.min(5000000, Number(process.env.WALLET_POOL_BUFFER || 0)));
 const rateBuckets = new Map();
 let redisClientPromise = null;
 let redisRateLimitWarned = false;
+let redisScannerLockWarned = false;
 
 // [YAXSHILANISH]: Har 1 soatda eskirgan rate limitlarni tozalash (Memory leak'ni oldini olish)
 setInterval(() => {
@@ -373,7 +380,8 @@ function clientRateKey(req, scope) {
 }
 
 function getRedisClient() {
-  if (RATE_LIMIT_BACKEND !== "redis" || !REDIS_URL) return null;
+  const redisRequested = RATE_LIMIT_BACKEND === "redis" || REDIS_SCANNER_LOCKS_ENABLED || REDIS_DEEP_CHECK_ENABLED;
+  if (!redisRequested || !REDIS_URL) return null;
   if (redisClientPromise) return redisClientPromise;
 
   redisClientPromise = (async () => {
@@ -431,6 +439,127 @@ async function checkRedisHealth() {
       backend: RATE_LIMIT_BACKEND,
       configured: true,
       error: err.message || String(err)
+    };
+  }
+}
+
+async function checkRedisDeepHealth() {
+  const report = {
+    ok: false,
+    configured: Boolean(REDIS_URL),
+    backend: RATE_LIMIT_BACKEND,
+    scanner_locks_enabled: REDIS_SCANNER_LOCKS_ENABLED,
+    scanner_locks_required: REDIS_SCANNER_LOCKS_REQUIRED,
+    checks: [],
+    message: ""
+  };
+
+  function push(name, ok, detail = "") {
+    report.checks.push({ name, ok: Boolean(ok), detail });
+  }
+
+  if (!REDIS_DEEP_CHECK_ENABLED) {
+    report.message = "REDIS_DEEP_CHECK_ENABLED=false";
+    push("deep_check_enabled", false, report.message);
+    return report;
+  }
+  if (!REDIS_URL) {
+    report.message = "REDIS_URL is missing";
+    push("redis_url", false, report.message);
+    return report;
+  }
+
+  const key = `vidipay:ops:deep:${crypto.randomUUID()}`;
+  const lockKey = `vidipay:ops:lock:${crypto.randomUUID()}`;
+  const lockValue = `${PROCESS_STARTED_AT.toISOString()}:${crypto.randomUUID()}`;
+  try {
+    const client = await withOpsTimeout(getRedisClient(), "redis_deep_connect");
+    const ping = await withOpsTimeout(client.ping(), "redis_deep_ping");
+    push("ping", ping === "PONG", ping);
+
+    await withOpsTimeout(client.set(key, "ok", { PX: 15000 }), "redis_deep_set");
+    const value = await withOpsTimeout(client.get(key), "redis_deep_get");
+    push("set_get", value === "ok", value || "empty");
+
+    const lockResult = await withOpsTimeout(client.set(lockKey, lockValue, { NX: true, PX: REDIS_SCANNER_LOCK_TTL_MS }), "redis_deep_lock");
+    push("nx_px_lock", lockResult === "OK", lockResult || "not_acquired");
+
+    await withOpsTimeout(client.del(key), "redis_deep_del");
+    if (lockResult === "OK") await releaseRedisLock(lockKey, lockValue);
+
+    report.ok = report.checks.every((item) => item.ok);
+    report.message = report.ok ? "Redis ping, set/get, TTL lock are working" : "Redis deep checks failed";
+    return report;
+  } catch (err) {
+    report.error = err.message || String(err);
+    report.message = "Redis deep check failed";
+    return report;
+  }
+}
+
+async function releaseRedisLock(key, value) {
+  const client = await getRedisClient();
+  if (!client) return false;
+  const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+  try {
+    const result = await client.eval(script, { keys: [key], arguments: [value] });
+    return Number(result) === 1;
+  } catch {
+    const current = await client.get(key).catch(() => null);
+    if (current === value) {
+      await client.del(key).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+}
+
+async function acquireScannerDistributedLock() {
+  if (!SCANNER_WORKER_MODE || !REDIS_SCANNER_LOCKS_ENABLED) {
+    return { enabled: false, acquired: true, key: null, value: null, message: "scanner Redis lock disabled" };
+  }
+  if (!REDIS_URL) {
+    const message = "REDIS_URL is missing for scanner Redis lock";
+    if (REDIS_SCANNER_LOCKS_REQUIRED) throw new Error(message);
+    if (!redisScannerLockWarned) {
+      redisScannerLockWarned = true;
+      console.warn("[scanner] Redis lock skipped:", message);
+    }
+    return { enabled: true, acquired: true, key: null, value: null, message };
+  }
+
+  const key = [
+    "vidipay:scanner:lock",
+    PAYMENT_NETWORK,
+    PAYMENT_TOKEN,
+    PAYMENT_SCANNER_SHARD_COUNT,
+    PAYMENT_SCANNER_SHARD_INDEX
+  ].join(":");
+  const value = `${PAYMENT_SCANNER_WORKER_ID}:${Date.now()}:${crypto.randomUUID()}`;
+  try {
+    const client = await getRedisClient();
+    const result = await client.set(key, value, { NX: true, PX: REDIS_SCANNER_LOCK_TTL_MS });
+    return {
+      enabled: true,
+      acquired: result === "OK",
+      key,
+      value,
+      ttl_ms: REDIS_SCANNER_LOCK_TTL_MS,
+      message: result === "OK" ? "scanner Redis lock acquired" : "scanner shard is locked by another worker"
+    };
+  } catch (err) {
+    if (REDIS_SCANNER_LOCKS_REQUIRED) throw err;
+    if (!redisScannerLockWarned) {
+      redisScannerLockWarned = true;
+      console.warn("[scanner] Redis lock unavailable, continuing without lock:", err.message);
+    }
+    return {
+      enabled: true,
+      acquired: true,
+      key,
+      value: null,
+      ttl_ms: REDIS_SCANNER_LOCK_TTL_MS,
+      message: `Redis lock unavailable, fallback allowed: ${err.message || String(err)}`
     };
   }
 }
@@ -2144,6 +2273,10 @@ function buildProcessMetrics() {
     rate_limit: {
       backend: RATE_LIMIT_BACKEND,
       redis_configured: Boolean(REDIS_URL),
+      redis_deep_check_enabled: REDIS_DEEP_CHECK_ENABLED,
+      scanner_locks_enabled: REDIS_SCANNER_LOCKS_ENABLED,
+      scanner_locks_required: REDIS_SCANNER_LOCKS_REQUIRED,
+      scanner_lock_ttl_ms: REDIS_SCANNER_LOCK_TTL_MS,
       memory_bucket_count: rateBuckets.size
     },
     settings_cache: {
@@ -2422,6 +2555,43 @@ async function buildWalletCapacityReport() {
   };
 }
 
+function buildWalletImportPlan(walletCapacity) {
+  const availableWallets = Number(walletCapacity?.counts?.available_wallets?.count || 0);
+  const totalWallets = Number(walletCapacity?.counts?.total_wallets?.count || 0);
+  const assignedWallets = Number(walletCapacity?.counts?.assigned_wallets?.count || 0);
+  const targetWithBuffer = CAPACITY_TARGET_USERS + WALLET_POOL_BUFFER;
+  const missingWallets = Math.max(0, targetWithBuffer - availableWallets);
+  const sqlBatchSize = Math.max(1000, Math.min(50000, Number(process.env.WALLET_IMPORT_SQL_BATCH_SIZE || 10000)));
+  const fileBatchSize = Math.max(1000, Math.min(100000, Number(process.env.WALLET_IMPORT_FILE_BATCH_SIZE || 50000)));
+
+  return {
+    status: missingWallets > 0 ? "action_required" : "ready",
+    target_users: CAPACITY_TARGET_USERS,
+    wallet_pool_buffer: WALLET_POOL_BUFFER,
+    required_available_wallets: targetWithBuffer,
+    current: {
+      total_wallets: totalWallets,
+      available_wallets: availableWallets,
+      assigned_wallets: assignedWallets
+    },
+    missing_wallets: missingWallets,
+    recommended_generation: {
+      generate_missing_script: "npm run wallets:generate-missing",
+      wallet_sql_batch_size: sqlBatchSize,
+      wallet_file_batch_size: fileBatchSize,
+      estimated_sql_batches: missingWallets > 0 ? Math.ceil(missingWallets / sqlBatchSize) : 0,
+      estimated_export_files: missingWallets > 0 ? Math.ceil(missingWallets / fileBatchSize) : 0
+    },
+    import_verify: [
+      "Run sql/IMPORT_PROGRESS_TABLE_1_5M.sql once.",
+      "Run generated public-addresses-*.sql files in Supabase SQL editor.",
+      "Run sql/WALLET_IMPORT_AFTER_GENERATION_VERIFY_1_5M.sql.",
+      "Run sql/FINAL_OPERATIONAL_GATE_1_5M.sql.",
+      "Open /ops/wallet-capacity and /ops/final-gate."
+    ]
+  };
+}
+
 function buildScannerShardReport(heartbeatSnapshot = { available: false, error: null, rows: [] }) {
   const rows = Array.isArray(heartbeatSnapshot.rows) ? heartbeatSnapshot.rows : [];
   const now = Date.now();
@@ -2513,7 +2683,9 @@ function buildScaleContract(scanner, shards, walletCapacity, backlog) {
   };
 }
 
-function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis, tonSigner, contract }) {
+function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis, redisDeep, tonSigner, contract }) {
+  const availableWallets = Number(walletCapacity?.counts?.available_wallets?.count ?? -1);
+  const walletTargetWithBuffer = CAPACITY_TARGET_USERS + WALLET_POOL_BUFFER;
   const required = [
     {
       name: "backend_version",
@@ -2526,9 +2698,14 @@ function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis,
       detail: redis?.message || redis?.error || redis?.backend || "unknown"
     },
     {
-      name: "scanner_workers_alive_min_4",
-      ok: Number(scanner?.scanner_workers_alive || 0) >= CAPACITY_3M_MIN_SCANNER_WORKERS,
-      detail: `alive=${Number(scanner?.scanner_workers_alive || 0)}, required=${CAPACITY_3M_MIN_SCANNER_WORKERS}`
+      name: "redis_deep_ops_ready",
+      ok: Boolean(redisDeep?.ok),
+      detail: redisDeep?.message || redisDeep?.error || "unknown"
+    },
+    {
+      name: "scanner_workers_alive_minimum",
+      ok: Number(scanner?.scanner_workers_alive || 0) >= FINAL_GATE_MIN_SCANNER_WORKERS,
+      detail: `alive=${Number(scanner?.scanner_workers_alive || 0)}, required=${FINAL_GATE_MIN_SCANNER_WORKERS}`
     },
     {
       name: "scanner_no_duplicate_shards",
@@ -2537,8 +2714,8 @@ function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis,
     },
     {
       name: "wallet_capacity_1_5m",
-      ok: Number(walletCapacity?.capacity_gap ?? -1) >= 0,
-      detail: `gap=${walletCapacity?.capacity_gap ?? "unknown"}, available=${walletCapacity?.counts?.available_wallets?.count ?? "unknown"}`
+      ok: availableWallets >= walletTargetWithBuffer,
+      detail: `available=${availableWallets}, required=${walletTargetWithBuffer}, buffer=${WALLET_POOL_BUFFER}`
     },
     {
       name: "ton_signer_ready",
@@ -2562,6 +2739,8 @@ function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis,
     status: blockers.length ? "blocked" : "ready",
     version: BACKEND_VERSION,
     target_users: CAPACITY_TARGET_USERS,
+    wallet_target_with_buffer: walletTargetWithBuffer,
+    final_gate_min_scanner_workers: FINAL_GATE_MIN_SCANNER_WORKERS,
     required,
     blockers,
     ready_for_1_5m_public_traffic: blockers.length === 0,
@@ -2622,6 +2801,13 @@ async function claimPendingPaymentOrdersForScan(limit) {
 
 async function scanPendingPaymentOrders(limit = PAYMENT_SCAN_BATCH_SIZE) {
   if (paymentScannerState.running) return paymentScannerState;
+  const scannerLock = await acquireScannerDistributedLock();
+  if (scannerLock.enabled && !scannerLock.acquired) {
+    paymentScannerState.lastRunAt = new Date().toISOString();
+    paymentScannerState.lastError = scannerLock.message;
+    await recordPaymentScannerHeartbeat();
+    return paymentScannerState;
+  }
   paymentScannerState.running = true;
   paymentScannerState.lastRunAt = new Date().toISOString();
   paymentScannerState.lastError = null;
@@ -2660,6 +2846,14 @@ async function scanPendingPaymentOrders(limit = PAYMENT_SCAN_BATCH_SIZE) {
     throw err;
   } finally {
     paymentScannerState.running = false;
+    if (scannerLock.enabled && scannerLock.acquired && scannerLock.key && scannerLock.value) {
+      await releaseRedisLock(scannerLock.key, scannerLock.value).catch((err) => {
+        if (!redisScannerLockWarned) {
+          redisScannerLockWarned = true;
+          console.warn("[scanner] Redis lock release failed:", err.message || err);
+        }
+      });
+    }
     await recordPaymentScannerHeartbeat();
   }
 }
@@ -3322,6 +3516,26 @@ app.get("/ops/wallet-capacity", async (req, res) => {
   }
 });
 
+app.get("/ops/wallet-import-plan", async (req, res) => {
+  try {
+    const wallet_capacity = await buildWalletCapacityReport();
+    const wallet_import_plan = buildWalletImportPlan(wallet_capacity);
+    res.json({
+      status: wallet_capacity.ok && wallet_import_plan.status === "ready" ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      wallet_capacity,
+      wallet_import_plan
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
 app.get("/ops/redis", async (req, res) => {
   try {
     const redis = await checkRedisHealth();
@@ -3330,6 +3544,24 @@ app.get("/ops/redis", async (req, res) => {
       version: BACKEND_VERSION,
       worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
       redis
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/redis-deep", async (req, res) => {
+  try {
+    const redis_deep = await checkRedisDeepHealth();
+    res.json({
+      status: redis_deep.ok ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      redis_deep
     });
   } catch (err) {
     res.status(503).json({
@@ -3362,10 +3594,11 @@ app.get("/ops/scale-contract", async (req, res) => {
   try {
     const scannerHeartbeats = await readPaymentScannerHeartbeats();
     const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog, redis, tonSigner] = await Promise.all([
+    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
       buildWalletCapacityReport(),
       buildScannerBacklogReport(),
       checkRedisHealth(),
+      checkRedisDeepHealth(),
       buildTonSignerReadinessReport()
     ]);
     const shards = buildScannerShardReport(scannerHeartbeats);
@@ -3380,6 +3613,11 @@ app.get("/ops/scale-contract", async (req, res) => {
       contract.checks.push({ name: "ton_signer_readiness", ok: false, required: true });
       contract.status = "blocked";
     }
+    if (!redisDeep.ok && !contract.blockers.includes("redis_deep_ops")) {
+      contract.blockers.push("redis_deep_ops");
+      contract.checks.push({ name: "redis_deep_ops", ok: false, required: true });
+      contract.status = "blocked";
+    }
     res.json({
       status: contract.status,
       version: BACKEND_VERSION,
@@ -3388,6 +3626,7 @@ app.get("/ops/scale-contract", async (req, res) => {
       scanner,
       shards,
       redis,
+      redis_deep: redisDeep,
       ton_signer: tonSigner,
       wallet_capacity: walletCapacity,
       backlog
@@ -3405,10 +3644,11 @@ app.get("/ops/final-gate", async (req, res) => {
   try {
     const scannerHeartbeats = await readPaymentScannerHeartbeats();
     const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog, redis, tonSigner] = await Promise.all([
+    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
       buildWalletCapacityReport(),
       buildScannerBacklogReport(),
       checkRedisHealth(),
+      checkRedisDeepHealth(),
       buildTonSignerReadinessReport()
     ]);
     const shards = buildScannerShardReport(scannerHeartbeats);
@@ -3419,6 +3659,7 @@ app.get("/ops/final-gate", async (req, res) => {
       walletCapacity,
       backlog,
       redis,
+      redisDeep,
       tonSigner,
       contract
     });
@@ -3430,10 +3671,65 @@ app.get("/ops/final-gate", async (req, res) => {
       scanner,
       shards,
       redis,
+      redis_deep: redisDeep,
       ton_signer: tonSigner,
       wallet_capacity: walletCapacity,
       backlog,
       contract
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/launch-checklist", async (req, res) => {
+  try {
+    const scannerHeartbeats = await readPaymentScannerHeartbeats();
+    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
+      buildWalletCapacityReport(),
+      buildScannerBacklogReport(),
+      checkRedisHealth(),
+      checkRedisDeepHealth(),
+      buildTonSignerReadinessReport()
+    ]);
+    const shards = buildScannerShardReport(scannerHeartbeats);
+    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
+    const gate = buildFinalLaunchGate({
+      scanner,
+      shards,
+      walletCapacity,
+      backlog,
+      redis,
+      redisDeep,
+      tonSigner,
+      contract
+    });
+    const walletImportPlan = buildWalletImportPlan(walletCapacity);
+    const steps = [
+      { id: "web_service", ready: !SCANNER_WORKER_MODE, check: "Public API runs as Web Service with npm start." },
+      { id: "redis", ready: Boolean(redis.ok && redisDeep.ok), check: "RATE_LIMIT_BACKEND=redis, REDIS_URL set, ping/set/get/NX lock pass." },
+      { id: "scanner_workers", ready: Number(scanner.scanner_workers_alive || 0) >= FINAL_GATE_MIN_SCANNER_WORKERS, check: `At least ${FINAL_GATE_MIN_SCANNER_WORKERS} scanner workers heartbeat fresh.` },
+      { id: "scanner_shards", ready: Array.isArray(shards.duplicate_shards) && shards.duplicate_shards.length === 0, check: "No duplicate live scanner shard indexes." },
+      { id: "wallet_pool", ready: walletImportPlan.status === "ready", check: `${walletImportPlan.required_available_wallets} available TON wallets.` },
+      { id: "ton_signer", ready: Boolean(tonSigner.ok), check: "TON signer enabled, keys dir mounted, RPC endpoint works." },
+      { id: "sql_backlog", ready: Boolean(backlog.ok), check: "Payment order backlog audit is readable." },
+      { id: "final_gate", ready: gate.status === "ready", check: "/ops/final-gate returns ready." }
+    ];
+    const blockers = steps.filter((step) => !step.ready);
+    res.json({
+      status: blockers.length ? "blocked" : "ready",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      target_users: CAPACITY_TARGET_USERS,
+      steps,
+      blockers,
+      gate,
+      wallet_import_plan: walletImportPlan
     });
   } catch (err) {
     res.status(503).json({
@@ -3467,12 +3763,16 @@ app.get("/ops/scale-plan", async (req, res) => {
           minimum_for_3m: CAPACITY_3M_MIN_SCANNER_WORKERS,
           minimum_for_100x: CAPACITY_100X_MIN_SCANNER_WORKERS,
           minimum_for_hyperscale: CAPACITY_HYPERSCALE_MIN_SCANNER_WORKERS,
+          final_gate_minimum: FINAL_GATE_MIN_SCANNER_WORKERS,
           shard_count_supported: PAYMENT_SCANNER_SHARD_COUNT,
           batch_size: PAYMENT_SCAN_BATCH_SIZE,
           concurrency_per_worker: PAYMENT_SCAN_CONCURRENCY,
           jitter_ms: PAYMENT_SCAN_JITTER_MS,
           order_delay_ms: PAYMENT_SCAN_ORDER_DELAY_MS,
-          max_errors_per_run: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
+          max_errors_per_run: PAYMENT_SCAN_MAX_ERRORS_PER_RUN,
+          redis_locks_enabled: REDIS_SCANNER_LOCKS_ENABLED,
+          redis_locks_required: REDIS_SCANNER_LOCKS_REQUIRED,
+          redis_lock_ttl_ms: REDIS_SCANNER_LOCK_TTL_MS
         },
         tonapi: {
           request_timeout_ms: TONAPI_REQUEST_TIMEOUT_MS,

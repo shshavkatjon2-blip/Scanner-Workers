@@ -46,6 +46,9 @@ function main() {
     "FINAL_REMAINING_BLOCKERS_AUDIT_1_5M.sql",
     "FINAL_GATE_SQL_VERIFY_1_5M.sql",
     "IMPORT_PROGRESS_TABLE_1_5M.sql",
+    "FINAL_OPERATIONAL_GATE_1_5M.sql",
+    "WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql",
+    "SCANNER_WORKER_OPERATIONS_AUDIT_1_5M.sql",
     "RUN_SQL_IN_THIS_ORDER_1_5M.txt"
   ]) {
     assertFile(errors, file);
@@ -60,6 +63,9 @@ function main() {
     assertIncludes(errors, "PAYMENT_BACKLOG_FAST_AUDIT_1_5M.sql", "pending_orders_with_wallet", "payment backlog audit");
     assertIncludes(errors, "FINAL_GATE_SQL_VERIFY_1_5M.sql", "wallet_capacity_ready", "final SQL launch gate");
     assertIncludes(errors, "IMPORT_PROGRESS_TABLE_1_5M.sql", "wallet_import_batches", "wallet import progress table");
+    assertIncludes(errors, "FINAL_OPERATIONAL_GATE_1_5M.sql", "vidipay_operational_gate_1_5m", "final operational gate");
+    assertIncludes(errors, "WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql", "wallet_import_batches_summary", "wallet import manifest audit");
+    assertIncludes(errors, "SCANNER_WORKER_OPERATIONS_AUDIT_1_5M.sql", "scanner_live_summary", "scanner worker operations audit");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "POST_DEPLOY_VERIFY_1_5M.sql", "post deploy verify order");
     assertIncludes(errors, "RUN_SQL_IN_THIS_ORDER_1_5M.txt", "SCALE_CONTRACT_AUDIT_1_5M.sql", "scale contract run order");
   }

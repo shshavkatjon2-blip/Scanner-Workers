@@ -11,14 +11,20 @@ const required = [
   ["/ops/scanner-shards", 'app.get("/ops/scanner-shards"'],
   ["/ops/scanner-backlog", 'app.get("/ops/scanner-backlog"'],
   ["/ops/wallet-capacity", 'app.get("/ops/wallet-capacity"'],
+  ["/ops/wallet-import-plan", 'app.get("/ops/wallet-import-plan"'],
   ["/ops/redis", 'app.get("/ops/redis"'],
+  ["/ops/redis-deep", 'app.get("/ops/redis-deep"'],
   ["/ops/ton-signer", 'app.get("/ops/ton-signer"'],
   ["/ops/final-gate", 'app.get("/ops/final-gate"'],
+  ["/ops/launch-checklist", 'app.get("/ops/launch-checklist"'],
   ["/ops/scale-contract", 'app.get("/ops/scale-contract"'],
   ["redis health helper", "checkRedisHealth"],
+  ["redis deep health helper", "checkRedisDeepHealth"],
+  ["scanner distributed lock helper", "acquireScannerDistributedLock"],
   ["ton signer readiness helper", "buildTonSignerReadinessReport"],
   ["1.5M signer required flag", "REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M"],
   ["final launch gate helper", "buildFinalLaunchGate"],
+  ["wallet import plan helper", "buildWalletImportPlan"],
   ["wallet capacity helper", "buildWalletCapacityReport"],
   ["scanner backlog helper", "buildScannerBacklogReport"],
   ["scanner shard helper", "buildScannerShardReport"],
@@ -39,4 +45,4 @@ if (errors.length) {
 }
 
 console.log("SCALE CONTRACT CHECK OK");
-console.log("endpoints=/ops/scanner-shards,/ops/scanner-backlog,/ops/wallet-capacity,/ops/redis,/ops/ton-signer,/ops/final-gate,/ops/scale-contract");
+console.log("endpoints=/ops/scanner-shards,/ops/scanner-backlog,/ops/wallet-capacity,/ops/wallet-import-plan,/ops/redis,/ops/redis-deep,/ops/ton-signer,/ops/final-gate,/ops/launch-checklist,/ops/scale-contract");
