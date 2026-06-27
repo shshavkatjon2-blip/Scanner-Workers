@@ -2513,6 +2513,62 @@ function buildScaleContract(scanner, shards, walletCapacity, backlog) {
   };
 }
 
+function buildFinalLaunchGate({ scanner, shards, walletCapacity, backlog, redis, tonSigner, contract }) {
+  const required = [
+    {
+      name: "backend_version",
+      ok: BACKEND_VERSION === "v1.8.1-hyperscale-backpressure-20260627",
+      detail: BACKEND_VERSION
+    },
+    {
+      name: "redis_ready",
+      ok: Boolean(redis?.ok),
+      detail: redis?.message || redis?.error || redis?.backend || "unknown"
+    },
+    {
+      name: "scanner_workers_alive_min_4",
+      ok: Number(scanner?.scanner_workers_alive || 0) >= CAPACITY_3M_MIN_SCANNER_WORKERS,
+      detail: `alive=${Number(scanner?.scanner_workers_alive || 0)}, required=${CAPACITY_3M_MIN_SCANNER_WORKERS}`
+    },
+    {
+      name: "scanner_no_duplicate_shards",
+      ok: Array.isArray(shards?.duplicate_shards) && shards.duplicate_shards.length === 0,
+      detail: `duplicate_shards=${Array.isArray(shards?.duplicate_shards) ? shards.duplicate_shards.length : "unknown"}`
+    },
+    {
+      name: "wallet_capacity_1_5m",
+      ok: Number(walletCapacity?.capacity_gap ?? -1) >= 0,
+      detail: `gap=${walletCapacity?.capacity_gap ?? "unknown"}, available=${walletCapacity?.counts?.available_wallets?.count ?? "unknown"}`
+    },
+    {
+      name: "ton_signer_ready",
+      ok: Boolean(tonSigner?.ok),
+      detail: tonSigner?.rpc?.error || `wallet_files=${tonSigner?.signer?.wallet_files ?? "unknown"}`
+    },
+    {
+      name: "scanner_backlog_audit_ok",
+      ok: Boolean(backlog?.ok),
+      detail: `pending=${backlog?.counts?.pending_orders?.count ?? "unknown"}`
+    },
+    {
+      name: "scale_contract_not_blocked",
+      ok: contract?.status === "ready" || contract?.status === "warning",
+      detail: `status=${contract?.status || "unknown"}`
+    }
+  ];
+
+  const blockers = required.filter((item) => !item.ok);
+  return {
+    status: blockers.length ? "blocked" : "ready",
+    version: BACKEND_VERSION,
+    target_users: CAPACITY_TARGET_USERS,
+    required,
+    blockers,
+    ready_for_1_5m_public_traffic: blockers.length === 0,
+    generated_at: new Date().toISOString()
+  };
+}
+
 async function claimPendingPaymentOrdersForScan(limit) {
   const claimSeconds = Math.max(30, Math.ceil(Number(PAYMENT_SCAN_INTERVAL_MS || 15000) / 1000) * 4);
   const claimLimit = Math.max(1, Math.min(5000, Number(limit || PAYMENT_SCAN_BATCH_SIZE)));
@@ -3335,6 +3391,49 @@ app.get("/ops/scale-contract", async (req, res) => {
       ton_signer: tonSigner,
       wallet_capacity: walletCapacity,
       backlog
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/final-gate", async (req, res) => {
+  try {
+    const scannerHeartbeats = await readPaymentScannerHeartbeats();
+    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+    const [walletCapacity, backlog, redis, tonSigner] = await Promise.all([
+      buildWalletCapacityReport(),
+      buildScannerBacklogReport(),
+      checkRedisHealth(),
+      buildTonSignerReadinessReport()
+    ]);
+    const shards = buildScannerShardReport(scannerHeartbeats);
+    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
+    const gate = buildFinalLaunchGate({
+      scanner,
+      shards,
+      walletCapacity,
+      backlog,
+      redis,
+      tonSigner,
+      contract
+    });
+    res.json({
+      status: gate.status,
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      gate,
+      scanner,
+      shards,
+      redis,
+      ton_signer: tonSigner,
+      wallet_capacity: walletCapacity,
+      backlog,
+      contract
     });
   } catch (err) {
     res.status(503).json({

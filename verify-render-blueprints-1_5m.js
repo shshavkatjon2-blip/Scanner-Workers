@@ -27,14 +27,19 @@ function main() {
     "server.js",
     "scripts/plan-wallet-topup-1_5m.js",
     "scripts/generate-missing-ton-wallets-to-target-1_5m.js",
-    "scripts/verify-remaining-blockers-package-1_5m.js"
+    "scripts/verify-remaining-blockers-package-1_5m.js",
+    "scripts/final-live-gate-1_5m.js",
+    "scripts/verify-public-wallet-sql-batches-1_5m.js",
+    "scripts/build-production-launch-manifest-1_5m.js"
   ]) {
     if (!fs.existsSync(path.join(root, file))) fail(errors, `Missing ${file}`);
   }
 
   assertIncludes(errors, "server.js", 'app.get("/ops/redis"', "/ops/redis endpoint");
   assertIncludes(errors, "server.js", 'app.get("/ops/ton-signer"', "/ops/ton-signer endpoint");
+  assertIncludes(errors, "server.js", 'app.get("/ops/final-gate"', "/ops/final-gate endpoint");
   assertIncludes(errors, "server.js", "REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M", "1.5M signer requirement flag");
+  assertIncludes(errors, "server.js", "buildFinalLaunchGate", "final launch gate helper");
   assertIncludes(errors, "server.js", "buildTonSignerReadinessReport", "TON signer readiness report");
   assertIncludes(errors, "server.js", "checkRedisHealth", "Redis readiness report");
 
@@ -45,7 +50,10 @@ function main() {
     "env/WALLET_TOPUP_GENERATION_LOCAL_1_5M.env",
     "sql/FINAL_REMAINING_BLOCKERS_AUDIT_1_5M.sql",
     "sql/WALLET_IMPORT_AFTER_GENERATION_VERIFY_1_5M.sql",
-    "ops/ONE_SHOT_REMAINING_BLOCKERS_RUNBOOK_1_5M.md"
+    "sql/FINAL_GATE_SQL_VERIFY_1_5M.sql",
+    "ops/ONE_SHOT_REMAINING_BLOCKERS_RUNBOOK_1_5M.md",
+    "ops/PRODUCTION_LAUNCH_SEQUENCE_1_5M.md",
+    "sql/IMPORT_PROGRESS_TABLE_1_5M.sql"
   ]) {
     if (!existsFromPackage(file)) fail(errors, `Missing package file ${file}`);
   }

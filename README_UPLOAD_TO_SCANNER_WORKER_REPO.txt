@@ -1,42 +1,26 @@
 {
-  "name": "vidipay-backend",
-  "version": "1.0.0",
-  "description": "VidiPay Backend",
-  "main": "server.js",
-  "engines": {
-    "node": ">=20 <25"
+  "generated_at": "2026-06-27T15:45:37.433Z",
+  "version": "v1.8.1-hyperscale-backpressure-20260627",
+  "target_users": 1500000,
+  "required_live_endpoints": [
+    "/healthz",
+    "/ops/redis",
+    "/scanner/healthz",
+    "/ops/wallet-capacity",
+    "/ops/ton-signer",
+    "/ops/final-gate"
+  ],
+  "ready_criteria": {
+    "redis_ok": true,
+    "scanner_workers_alive_minimum": 4,
+    "wallet_capacity_gap_minimum": 0,
+    "ton_signer_ok": true,
+    "final_gate_ready_for_1_5m_public_traffic": true
   },
-  "scripts": {
-    "start": "node server.js",
-    "start:scanner": "node scripts/start-scanner.js",
-    "generate:ton-wallets": "node scripts/generate-ton-wallet-pool.js",
-    "generate:ton-wallets:large": "node scripts/generate-ton-wallet-pool-large.js",
-    "verify:env": "node scripts/verify-env-1_5m.js",
-    "verify:env:api": "node scripts/verify-env-1_5m.js api",
-    "verify:env:scanner": "node scripts/verify-env-1_5m.js scanner",
-    "verify:live": "node scripts/verify-live-1_5m.js",
-    "verify:package": "node scripts/verify-package-1_5m.js",
-    "verify:render": "node scripts/verify-render-blueprints-1_5m.js",
-    "verify:sql": "node scripts/verify-sql-package-1_5m.js",
-    "verify:contract": "node scripts/verify-contract-1_5m.js",
-    "verify:blockers": "node scripts/verify-remaining-blockers-package-1_5m.js",
-    "verify:all": "npm run verify:package && npm run verify:render && npm run verify:sql && npm run verify:contract && npm run verify:blockers",
-    "verify:staging": "node scripts/verify-staging-deploy.js",
-    "wallets:topup-plan": "node scripts/plan-wallet-topup-1_5m.js",
-    "wallets:generate-missing": "node scripts/generate-missing-ton-wallets-to-target-1_5m.js",
-    "wallets:verify": "node scripts/verify-ton-wallet-pool.js"
+  "upload_packages": {
+    "web_service": "UPLOAD_WEB_SERVICE_1_5M_PRODUCTION_LAUNCH_BUNDLE_2026-06-27.zip",
+    "scanner_workers": "UPLOAD_SCANNER_WORKERS_1_5M_PRODUCTION_LAUNCH_BUNDLE_2026-06-27.zip",
+    "full_bundle": "UPLOAD_1_5M_PRODUCTION_LAUNCH_BUNDLE_2026-06-27.zip"
   },
-  "dependencies": {
-    "@orbs-network/ton-access": "^2.3.3",
-    "@supabase/supabase-js": "^2.50.0",
-    "@ton/crypto": "^3.3.0",
-    "@ton/ton": "^16.3.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.0",
-    "helmet": "^8.0.0",
-    "object-assign": "^4.1.1",
-    "vary": "^1.1.2",
-    "redis": "^4.7.0"
-  }
+  "private_key_policy": "Never upload private-keys to GitHub, Render, Supabase, or frontend hosting."
 }
