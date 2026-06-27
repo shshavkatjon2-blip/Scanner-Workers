@@ -37,7 +37,10 @@ function main() {
     "scripts/diagnose-live-control-tower-1_5m.js",
     "scripts/generate-wallet-import-manifest-1_5m.js",
     "scripts/generate-scanner-shard-env-matrix-1_5m.js",
-    "scripts/generate-render-env-bundle-1_5m.js"
+    "scripts/generate-render-env-bundle-1_5m.js",
+    "scripts/generate-closeout-execution-kit-1_5m.js",
+    "scripts/verify-render-env-file-1_5m.js",
+    "scripts/verify-signer-keys-dir-1_5m.js"
   ]) {
     if (!fs.existsSync(path.join(root, file))) fail(errors, `Missing ${file}`);
   }
@@ -73,6 +76,10 @@ function main() {
     "sql/WALLET_IMPORT_MANIFEST_AUDIT_1_5M.sql",
     "sql/SCANNER_WORKER_OPERATIONS_AUDIT_1_5M.sql",
     "sql/CONTROL_TOWER_SQL_AUDIT_1_5M.sql",
+    "sql/WALLET_ASSIGNMENT_INTEGRITY_AUDIT_1_5M.sql",
+    "sql/PAYMENT_ORDER_TO_WALLET_LINK_AUDIT_1_5M.sql",
+    "sql/TON_DEPOSIT_REFUND_AUDIT_1_5M.sql",
+    "sql/CLOSEOUT_FINAL_SQL_AUDIT_1_5M.sql",
     "ops/ONE_SHOT_REMAINING_BLOCKERS_RUNBOOK_1_5M.md",
     "ops/PRODUCTION_LAUNCH_SEQUENCE_1_5M.md",
     "ops/HYPERSCALE_OPERATIONS_RUNBOOK_1_5M.md",

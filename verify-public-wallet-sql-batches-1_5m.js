@@ -50,6 +50,9 @@ function main() {
     "scripts/generate-wallet-import-manifest-1_5m.js",
     "scripts/generate-scanner-shard-env-matrix-1_5m.js",
     "scripts/generate-render-env-bundle-1_5m.js",
+    "scripts/generate-closeout-execution-kit-1_5m.js",
+    "scripts/verify-render-env-file-1_5m.js",
+    "scripts/verify-signer-keys-dir-1_5m.js",
     "render.yaml",
     "render-build-fix.cjs"
   ]) {
@@ -105,6 +108,9 @@ function main() {
   assertIncludes(errors, "package.json", "\"verify:ops\"", "ops verify script");
   assertIncludes(errors, "package.json", "\"verify:control-tower\"", "control tower verify script");
   assertIncludes(errors, "package.json", "\"diagnose:live\"", "live diagnose script");
+  assertIncludes(errors, "package.json", "\"closeout:kit\"", "closeout kit script");
+  assertIncludes(errors, "package.json", "\"verify:render-env-file\"", "render env file verifier script");
+  assertIncludes(errors, "package.json", "\"verify:signer-keys\"", "signer keys verifier script");
   assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
   if (isWorkerPackage) {
     assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
@@ -118,6 +124,7 @@ function main() {
   assertIncludes(errors, "render-build-fix.cjs", "object-assign", "Render clean-install dependency guard");
   assertIncludes(errors, "render-build-fix.cjs", "\"verify:ops\"", "Render build ops verify script");
   assertIncludes(errors, "render-build-fix.cjs", "\"verify:control-tower\"", "Render build control tower verify script");
+  assertIncludes(errors, "render-build-fix.cjs", "\"closeout:kit\"", "Render build closeout kit script");
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");
 
   const textFiles = walk(root)

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-27T19:00:00.960Z",
+  "generated_at": "2026-06-27T19:13:34.942Z",
   "version": "v1.8.1-hyperscale-backpressure-20260627",
   "target_users": 1500000,
   "required_live_endpoints": [

@@ -1,81 +1,60 @@
 const fs = require("fs");
 const path = require("path");
 
-const root = path.resolve(__dirname, "..");
-
-function read(file) {
-  return fs.readFileSync(path.join(root, file), "utf8");
+function readArg(name, fallback = "") {
+  const prefix = `--${name}=`;
+  const direct = process.argv.find((item) => item.startsWith(prefix));
+  if (direct) return direct.slice(prefix.length);
+  const index = process.argv.indexOf(`--${name}`);
+  if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1];
+  return fallback;
 }
 
-function exists(file) {
-  return fs.existsSync(path.join(root, file));
-}
-
-function fail(errors, message) {
-  errors.push(message);
-}
-
-function assertIncludes(errors, file, pattern, label) {
-  if (!exists(file)) return fail(errors, `Missing ${file}`);
-  if (!read(file).includes(pattern)) fail(errors, `${file} missing ${label || pattern}`);
-}
-
-function assertNotIncludes(errors, file, pattern, label) {
-  if (!exists(file)) return;
-  if (read(file).includes(pattern)) fail(errors, `${file} contains ${label || pattern}`);
-}
-
-function countOccurrences(text, pattern) {
-  const matches = text.match(new RegExp(pattern, "g"));
-  return matches ? matches.length : 0;
+function walk(dir, files = []) {
+  if (!fs.existsSync(dir)) return files;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, files);
+    else if (entry.name.endsWith(".json")) files.push(full);
+  }
+  return files;
 }
 
 function main() {
-  const errors = [];
-  assertIncludes(errors, "render.yaml", "buildCommand: node render-build-fix.cjs && npm install --omit=dev --no-audit --no-fund", "safe clean install build command");
-  assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "node_modules cleanup guard");
-  assertIncludes(errors, "render-build-fix.cjs", "package-lock.json", "package-lock cleanup guard");
-  assertNotIncludes(errors, "render.yaml", "npm ci", "npm ci build command");
-
-  const render = exists("render.yaml") ? read("render.yaml") : "";
-  const isWorker = render.includes("type: worker");
-  const isWeb = render.includes("type: web");
-
-  if (!isWorker && !isWeb) fail(errors, "render.yaml must be either Web Service or Background Worker");
-
-  if (isWeb) {
-    assertIncludes(errors, "render.yaml", "startCommand: npm start", "Web Service start command");
-    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_ENABLED", "API scanner disabled marker");
-    assertIncludes(errors, "render.yaml", "RATE_LIMIT_BACKEND", "API Redis rate-limit marker");
-    assertIncludes(errors, "render.yaml", "CAPACITY_TARGET_USERS", "1.5M target env marker");
-    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit marker");
-    assertIncludes(errors, "render.yaml", "OPS_SNAPSHOT_CACHE_TTL_MS", "ops snapshot cache marker");
-  }
-
-  if (isWorker) {
-    assertIncludes(errors, "render.yaml", "startCommand: npm run start:scanner", "Background Worker start command");
-    assertIncludes(errors, "render.yaml", "WORKER_MODE", "scanner worker mode env");
-    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_COUNT", "scanner shard count env");
-    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_INDEX", "scanner shard index env");
-    assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", "scanner heartbeat read limit env");
-    for (const file of ["render.4-workers.yaml", "render.16-workers.yaml", "render.64-workers.yaml", "render.256-workers.yaml"]) {
-      assertIncludes(errors, file, "startCommand: npm run start:scanner", `${file} scanner start command`);
-      assertIncludes(errors, file, "PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT", `${file} scanner heartbeat read limit`);
-      assertNotIncludes(errors, file, "npm ci", `${file} npm ci`);
+  const keysDir = path.resolve(readArg("keys-dir", ""));
+  const minFiles = Math.max(1, Number(readArg("min-files", "1")));
+  if (!keysDir || !fs.existsSync(keysDir)) throw new Error(`TON_SIGNER_KEYS_DIR not found: ${keysDir}`);
+  const files = walk(keysDir);
+  const addresses = new Set();
+  let valid = 0;
+  let invalid = 0;
+  for (const file of files.slice(0, 10000)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(file, "utf8"));
+      const hasKey = Boolean(data.mnemonic || data.seed_hex || data.secret_key || data.private_key);
+      const address = String(data.address || data.wallet_address || "").trim();
+      if (!hasKey || !address) {
+        invalid += 1;
+        continue;
+      }
+      addresses.add(address);
+      valid += 1;
+    } catch {
+      invalid += 1;
     }
-    const blueprint16 = exists("render.16-workers.yaml") ? read("render.16-workers.yaml") : "";
-    const serviceCount16 = countOccurrences(blueprint16, "type: worker");
-    if (serviceCount16 !== 16) fail(errors, `render.16-workers.yaml expected 16 workers, got ${serviceCount16}`);
   }
-
-  if (errors.length) {
-    console.error("RENDER BLUEPRINT CHECK FAILED");
-    for (const error of errors) console.error(`- ${error}`);
-    process.exit(1);
-  }
-
-  console.log("RENDER BLUEPRINT CHECK OK");
-  console.log(`service_type=${isWorker ? "worker" : "web"}`);
+  const report = {
+    status: files.length >= minFiles && valid > 0 && invalid === 0 ? "ok" : "failed",
+    keys_dir: keysDir,
+    files_found: files.length,
+    files_sample_checked: Math.min(files.length, 10000),
+    valid_sample: valid,
+    invalid_sample: invalid,
+    duplicate_addresses_in_sample: valid - addresses.size
+  };
+  fs.writeFileSync(path.join(keysDir, "..", "signer-keys-dir-verification-report.json"), JSON.stringify(report, null, 2), "utf8");
+  console.log(JSON.stringify(report, null, 2));
+  if (report.status !== "ok") process.exit(1);
 }
 
 main();

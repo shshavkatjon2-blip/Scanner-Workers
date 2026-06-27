@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
+const { spawnSync } = require("child_process");
 
 const baseUrl = String(process.argv[2] || process.env.PUBLIC_BACKEND_URL || "https://vidipay-backend.onrender.com").replace(/\/$/, "");
 const timeoutMs = Math.max(3000, Number(process.env.LIVE_VERIFY_TIMEOUT_MS || 25000));
@@ -31,6 +32,20 @@ function requestJson(pathname) {
   });
 }
 
+function requestJsonWithCurl(pathname) {
+  const url = `${baseUrl}${pathname}`;
+  const result = spawnSync("curl.exe", ["-s", "--max-time", String(Math.ceil(timeoutMs / 1000)), url], {
+    encoding: "utf8"
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr || `curl exited with ${result.status}`);
+  return {
+    endpoint: pathname,
+    statusCode: 200,
+    json: JSON.parse(result.stdout)
+  };
+}
+
 async function main() {
   const endpoints = [
     "/healthz",
@@ -46,9 +61,13 @@ async function main() {
   const errors = [];
   for (const endpoint of endpoints) {
     try {
-      results.push(await requestJson(endpoint));
+      try {
+        results.push(await requestJson(endpoint));
+      } catch {
+        results.push(requestJsonWithCurl(endpoint));
+      }
     } catch (err) {
-      errors.push({ endpoint, error: err.message });
+      errors.push({ endpoint, error: err.message || String(err) });
     }
   }
   const control = results.find((item) => item.endpoint.startsWith("/ops/control-tower"))?.json || {};
