@@ -1,0 +1,9 @@
+UPLOAD THIS ZIP TO RENDER BACKGROUND WORKERS ONLY
+
+Type: Background Worker pool
+Build command: npm ci --omit=dev
+Start command: npm run start:scanner
+Expected version: v1.8.0-100x-scale-controls-20260627
+
+Use render.100x-64-workers.yaml for the 64-shard worker pool.
+Do NOT upload this zip to the Web Service.
