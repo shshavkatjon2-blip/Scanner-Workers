@@ -346,6 +346,10 @@ function requireFields(body, fields) {
 
 const RATE_LIMIT_BACKEND = String(process.env.RATE_LIMIT_BACKEND || "memory").trim().toLowerCase();
 const REDIS_URL = String(process.env.REDIS_URL || "").trim();
+const OPS_DB_AUDIT_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.env.OPS_DB_AUDIT_TIMEOUT_MS || 8000)));
+const SCALE_AUDIT_COUNT_MODE = ["exact", "planned", "estimated"].includes(String(process.env.SCALE_AUDIT_COUNT_MODE || "").trim().toLowerCase())
+  ? String(process.env.SCALE_AUDIT_COUNT_MODE).trim().toLowerCase()
+  : "planned";
 const rateBuckets = new Map();
 let redisClientPromise = null;
 let redisRateLimitWarned = false;
@@ -2218,6 +2222,215 @@ function buildCapacityReadiness(scanner) {
   };
 }
 
+function withOpsTimeout(promise, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${OPS_DB_AUDIT_TIMEOUT_MS}ms`)), OPS_DB_AUDIT_TIMEOUT_MS);
+    })
+  ]);
+}
+
+async function safeSupabaseCount(table, label, applyQuery = (query) => query) {
+  try {
+    const query = applyQuery(supabase.from(table).select("*", {
+      count: SCALE_AUDIT_COUNT_MODE,
+      head: true
+    }));
+    const { count, error } = await withOpsTimeout(query, label);
+    if (error) {
+      return {
+        ok: false,
+        label,
+        table,
+        count: null,
+        error: error.message || String(error)
+      };
+    }
+    return {
+      ok: true,
+      label,
+      table,
+      count: Number(count || 0),
+      mode: SCALE_AUDIT_COUNT_MODE
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      label,
+      table,
+      count: null,
+      error: err.message || String(err)
+    };
+  }
+}
+
+function compactCountMap(items) {
+  return Object.fromEntries(items.map((item) => [item.label, item]));
+}
+
+async function buildScannerBacklogReport() {
+  const nowIso = new Date().toISOString();
+  const counts = await Promise.all([
+    safeSupabaseCount("payment_orders", "pending_orders", (query) => query
+      .eq("status", "pending")
+      .eq("network", PAYMENT_NETWORK)
+      .eq("token", PAYMENT_TOKEN)
+      .not("wallet_address", "is", null)),
+    safeSupabaseCount("payment_orders", "claimed_pending_orders", (query) => query
+      .eq("status", "pending")
+      .eq("network", PAYMENT_NETWORK)
+      .eq("token", PAYMENT_TOKEN)
+      .not("wallet_address", "is", null)
+      .not("scanner_claimed_until", "is", null)
+      .gt("scanner_claimed_until", nowIso)),
+    safeSupabaseCount("payment_orders", "expired_claims", (query) => query
+      .eq("status", "pending")
+      .eq("network", PAYMENT_NETWORK)
+      .eq("token", PAYMENT_TOKEN)
+      .not("wallet_address", "is", null)
+      .not("scanner_claimed_until", "is", null)
+      .lte("scanner_claimed_until", nowIso)),
+    safeSupabaseCount("payment_orders", "never_checked_pending_orders", (query) => query
+      .eq("status", "pending")
+      .eq("network", PAYMENT_NETWORK)
+      .eq("token", PAYMENT_TOKEN)
+      .not("wallet_address", "is", null)
+      .is("last_checked_at", null))
+  ]);
+  return {
+    ok: counts.every((item) => item.ok),
+    checked_at: nowIso,
+    count_mode: SCALE_AUDIT_COUNT_MODE,
+    timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
+    counts: compactCountMap(counts)
+  };
+}
+
+async function buildWalletCapacityReport() {
+  const counts = await Promise.all([
+    safeSupabaseCount("payment_wallets", "total_wallets"),
+    safeSupabaseCount("payment_wallets", "active_wallets", (query) => query.eq("is_active", true)),
+    safeSupabaseCount("payment_wallets", "available_wallets", (query) => query
+      .eq("is_active", true)
+      .is("assigned_to_telegram_id", null)),
+    safeSupabaseCount("payment_wallets", "assigned_wallets", (query) => query
+      .not("assigned_to_telegram_id", "is", null)),
+    safeSupabaseCount("payment_wallets", "wallets_with_orders", (query) => query
+      .not("assigned_order_id", "is", null))
+  ]);
+  const byLabel = compactCountMap(counts);
+  const available = byLabel.available_wallets?.count;
+  const total = byLabel.total_wallets?.count;
+  const availableKnown = typeof available === "number";
+  const totalKnown = typeof total === "number";
+  return {
+    ok: counts.every((item) => item.ok),
+    target_users: CAPACITY_TARGET_USERS,
+    count_mode: SCALE_AUDIT_COUNT_MODE,
+    timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
+    counts: byLabel,
+    capacity_gap: availableKnown ? available - CAPACITY_TARGET_USERS : null,
+    available_ratio_to_target: availableKnown && CAPACITY_TARGET_USERS > 0
+      ? Number((available / CAPACITY_TARGET_USERS).toFixed(4))
+      : null,
+    total_ratio_to_target: totalKnown && CAPACITY_TARGET_USERS > 0
+      ? Number((total / CAPACITY_TARGET_USERS).toFixed(4))
+      : null
+  };
+}
+
+function buildScannerShardReport(heartbeatSnapshot = { available: false, error: null, rows: [] }) {
+  const rows = Array.isArray(heartbeatSnapshot.rows) ? heartbeatSnapshot.rows : [];
+  const now = Date.now();
+  const staleAfterMs = PAYMENT_SCANNER_STALE_AFTER_MS;
+  const scannerRows = rows.filter((row) => row?.worker_mode === "scanner");
+  const activeRows = scannerRows.filter((row) => {
+    const seenMs = row?.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+    return Boolean(seenMs && now - seenMs <= staleAfterMs);
+  });
+  const expectedShardCount = Math.max(
+    1,
+    PAYMENT_SCANNER_SHARD_COUNT,
+    ...scannerRows.map((row) => Number(row.shard_count || 0)).filter((value) => Number.isFinite(value))
+  );
+  const activeByShard = new Map();
+  for (const row of activeRows) {
+    const shard = Number(row.shard_index || 0);
+    if (!activeByShard.has(shard)) activeByShard.set(shard, []);
+    activeByShard.get(shard).push(row.worker_id);
+  }
+  const duplicateShards = [...activeByShard.entries()]
+    .filter(([, workers]) => workers.length > 1)
+    .map(([shard_index, workers]) => ({ shard_index, workers }));
+  const inspectLimit = Math.min(expectedShardCount, 256);
+  const missingShardSample = [];
+  for (let shard = 0; shard < inspectLimit; shard += 1) {
+    if (!activeByShard.has(shard)) missingShardSample.push(shard);
+    if (missingShardSample.length >= 64) break;
+  }
+  return {
+    available: Boolean(heartbeatSnapshot.available),
+    error: heartbeatSnapshot.error || null,
+    expected_shard_count: expectedShardCount,
+    inspected_shards: inspectLimit,
+    scanner_workers_seen: scannerRows.length,
+    scanner_workers_alive: activeRows.length,
+    active_shards: activeByShard.size,
+    missing_shard_sample: missingShardSample,
+    duplicate_shards: duplicateShards,
+    stale_after_ms: staleAfterMs,
+    latest_rows: scannerRows.slice(0, 20).map((row) => ({
+      worker_id: row.worker_id,
+      shard_count: row.shard_count,
+      shard_index: row.shard_index,
+      last_seen_at: row.last_seen_at,
+      last_run_at: row.last_run_at,
+      last_error_present: Boolean(row.last_error),
+      checked_total: Number(row.checked_total || 0),
+      confirmed_total: Number(row.confirmed_total || 0)
+    }))
+  };
+}
+
+function buildScaleContract(scanner, shards, walletCapacity, backlog) {
+  const apiRedisOk = SCANNER_WORKER_MODE ? true : RATE_LIMIT_BACKEND === "redis" && Boolean(REDIS_URL);
+  const paymentRangeOk =
+    Number(PAYMENT_MIN_RECEIVED_TON) <= Number(PAYMENT_AMOUNT_TON) &&
+    Number(PAYMENT_AMOUNT_TON) <= Number(PAYMENT_MAX_RECEIVED_TON);
+  const scannerAlive = Boolean(scanner?.status === "ok" && scanner?.scanner_worker_alive === true);
+  const enoughScannerWorkers = Number(scanner?.scanner_workers_alive || 0) >= CAPACITY_3M_MIN_SCANNER_WORKERS;
+  const walletAuditOk = Boolean(walletCapacity?.ok);
+  const backlogAuditOk = Boolean(backlog?.ok);
+  const availableWallets = walletCapacity?.counts?.available_wallets?.count;
+  const enoughWallets = typeof availableWallets === "number" ? availableWallets >= CAPACITY_TARGET_USERS : false;
+  const checks = [
+    { name: "backend_version", ok: BACKEND_VERSION === "v1.8.1-hyperscale-backpressure-20260627", required: true },
+    { name: "api_redis", ok: apiRedisOk, required: !SCANNER_WORKER_MODE },
+    { name: "api_scanner_disabled", ok: SCANNER_WORKER_MODE ? true : PAYMENT_SCANNER_ENABLED === false, required: !SCANNER_WORKER_MODE },
+    { name: "payment_range", ok: paymentRangeOk, required: true },
+    { name: "scanner_heartbeat", ok: scannerAlive, required: true },
+    { name: "scanner_worker_pool_minimum", ok: enoughScannerWorkers, required: true },
+    { name: "scanner_shards_no_duplicates", ok: Array.isArray(shards?.duplicate_shards) && shards.duplicate_shards.length === 0, required: true },
+    { name: "wallet_capacity_audit", ok: walletAuditOk, required: true },
+    { name: "wallets_available_for_target", ok: enoughWallets, required: true },
+    { name: "scanner_backlog_audit", ok: backlogAuditOk, required: true },
+    { name: "ton_auto_payout", ok: TON_AUTO_PAYOUT_ENABLED, required: false },
+    { name: "ton_signer", ok: TON_SIGNER_ENABLED, required: false }
+  ];
+  const blockers = checks.filter((item) => item.required && !item.ok).map((item) => item.name);
+  const warnings = checks.filter((item) => !item.required && !item.ok).map((item) => item.name);
+  return {
+    status: blockers.length ? "blocked" : (warnings.length ? "warning" : "ready"),
+    version: BACKEND_VERSION,
+    worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+    target_users: CAPACITY_TARGET_USERS,
+    checks,
+    blockers,
+    warnings
+  };
+}
+
 async function claimPendingPaymentOrdersForScan(limit) {
   const claimSeconds = Math.max(30, Math.ceil(Number(PAYMENT_SCAN_INTERVAL_MS || 15000) / 1000) * 4);
   const claimLimit = Math.max(1, Math.min(5000, Number(limit || PAYMENT_SCAN_BATCH_SIZE)));
@@ -2904,6 +3117,92 @@ app.get("/ops/live", async (req, res) => {
       deployment: buildDeploymentShape(scanner),
       capacity,
       warnings
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/scanner-shards", async (req, res) => {
+  try {
+    const scannerHeartbeats = await readPaymentScannerHeartbeats();
+    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+    const shards = buildScannerShardReport(scannerHeartbeats);
+    res.json({
+      status: scanner.status === "ok" && shards.duplicate_shards.length === 0 ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      scanner,
+      shards
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/scanner-backlog", async (req, res) => {
+  try {
+    const backlog = await buildScannerBacklogReport();
+    res.json({
+      status: backlog.ok ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      backlog
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/wallet-capacity", async (req, res) => {
+  try {
+    const wallet_capacity = await buildWalletCapacityReport();
+    res.json({
+      status: wallet_capacity.ok && Number(wallet_capacity.capacity_gap || 0) >= 0 ? "ok" : "action_required",
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      wallet_capacity
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "not_ready",
+      version: BACKEND_VERSION,
+      error: err.message
+    });
+  }
+});
+
+app.get("/ops/scale-contract", async (req, res) => {
+  try {
+    const scannerHeartbeats = await readPaymentScannerHeartbeats();
+    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
+    const [walletCapacity, backlog] = await Promise.all([
+      buildWalletCapacityReport(),
+      buildScannerBacklogReport()
+    ]);
+    const shards = buildScannerShardReport(scannerHeartbeats);
+    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
+    res.json({
+      status: contract.status,
+      version: BACKEND_VERSION,
+      worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
+      contract,
+      scanner,
+      shards,
+      wallet_capacity: walletCapacity,
+      backlog
     });
   } catch (err) {
     res.status(503).json({

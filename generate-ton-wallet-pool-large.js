@@ -14,6 +14,7 @@ const intervalMs = readNumber("PAYMENT_SCAN_INTERVAL_MS", 3000, 1000, 300000);
 const jitterMs = readNumber("PAYMENT_SCAN_JITTER_MS", 2500, 0, 60000);
 const orderDelayMs = readNumber("PAYMENT_SCAN_ORDER_DELAY_MS", 10, 0, 5000);
 const maxErrorsPerRun = readNumber("PAYMENT_SCAN_MAX_ERRORS_PER_RUN", 500, 1, 10000);
+const staleAfterMs = readNumber("PAYMENT_SCANNER_STALE_AFTER_MS", 30000, 30000, 300000);
 
 function serviceYaml(index) {
   return `  - type: worker
@@ -47,6 +48,8 @@ function serviceYaml(index) {
         value: ${orderDelayMs}
       - key: PAYMENT_SCAN_MAX_ERRORS_PER_RUN
         value: ${maxErrorsPerRun}
+      - key: PAYMENT_SCANNER_STALE_AFTER_MS
+        value: ${staleAfterMs}
       - key: TONAPI_REQUEST_TIMEOUT_MS
         value: 12000
       - key: TONAPI_RETRY_COUNT
