@@ -45,7 +45,10 @@ function main() {
     "scripts/verify-contract-1_5m.js",
     "render.yaml",
     "render-build-fix.cjs",
-    "README_UPLOAD_TO_VIDIPAY_BACKEND_REPO.txt"
+    "render.16-workers.yaml",
+    "render.64-workers.yaml",
+    "render.256-workers.yaml",
+    "README_UPLOAD_TO_SCANNER_WORKER_REPO.txt"
   ]) {
     if (!exists(file)) fail(errors, `Missing ${file}`);
   }
@@ -73,12 +76,15 @@ function main() {
   assertIncludes(errors, "server.js", "OPS_DB_AUDIT_TIMEOUT_MS", "ops DB audit timeout");
   assertIncludes(errors, "server.js", "SCALE_AUDIT_COUNT_MODE", "scale audit count mode");
   assertIncludes(errors, "server.js", "shutdownGracefully", "graceful shutdown");
+  assertIncludes(errors, "scripts/start-scanner.js", "Shard", "scanner shard startup log");
   assertIncludes(errors, "scripts/verify-live-1_5m.js", expectedVersion, "verify-live expected version");
   assertIncludes(errors, "package.json", "\"verify:package\"", "package verify script");
   assertIncludes(errors, "package.json", "\"verify:all\"", "full verify script");
-  assertIncludes(errors, "render.yaml", "type: web", "Render Web Service type");
-  assertIncludes(errors, "render.yaml", "startCommand: npm start", "Render Web Service start command");
-  assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_ENABLED", "scanner disabled env marker");
+  assertIncludes(errors, "render.yaml", "type: worker", "Render Background Worker type");
+  assertIncludes(errors, "render.yaml", "startCommand: npm run start:scanner", "Render Background Worker start command");
+  assertIncludes(errors, "render.yaml", "PAYMENT_SCANNER_SHARD_INDEX", "scanner shard index env marker");
+  assertIncludes(errors, "render.16-workers.yaml", "vidipay-payment-scanner-16-15", "16th scanner worker");
+  assertIncludes(errors, "render.256-workers.yaml", "vidipay-payment-scanner-256-255", "256th scanner worker");
   assertIncludes(errors, "server.js", "CAPACITY_TARGET_USERS || 1500000", "1.5M capacity target default");
   assertIncludes(errors, "render-build-fix.cjs", "object-assign", "Render clean-install dependency guard");
   assertIncludes(errors, "render-build-fix.cjs", "fs.rmSync(\"node_modules\"", "Render node_modules cleanup");

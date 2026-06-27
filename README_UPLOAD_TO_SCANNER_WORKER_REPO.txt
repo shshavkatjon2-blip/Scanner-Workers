@@ -16,6 +16,10 @@
     "verify:env:scanner": "node scripts/verify-env-1_5m.js scanner",
     "verify:live": "node scripts/verify-live-1_5m.js",
     "verify:package": "node scripts/verify-package-1_5m.js",
+    "verify:render": "node scripts/verify-render-blueprints-1_5m.js",
+    "verify:sql": "node scripts/verify-sql-package-1_5m.js",
+    "verify:contract": "node scripts/verify-contract-1_5m.js",
+    "verify:all": "npm run verify:package && npm run verify:render && npm run verify:sql && npm run verify:contract",
     "verify:staging": "node scripts/verify-staging-deploy.js",
     "wallets:verify": "node scripts/verify-ton-wallet-pool.js"
   },
