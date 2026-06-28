@@ -353,6 +353,10 @@ const REDIS_SCANNER_LOCKS_REQUIRED = process.env.REDIS_SCANNER_LOCKS_REQUIRED ==
 const REDIS_SCANNER_LOCK_TTL_MS = Math.max(5000, Math.min(300000, Number(process.env.REDIS_SCANNER_LOCK_TTL_MS || 60000)));
 const REDIS_DEEP_CHECK_ENABLED = process.env.REDIS_DEEP_CHECK_ENABLED !== "false";
 const OPS_DB_AUDIT_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.env.OPS_DB_AUDIT_TIMEOUT_MS || 8000)));
+const SCANNER_HEARTBEAT_CACHE_TTL_MS = Math.max(0, Math.min(10000, Number(process.env.SCANNER_HEARTBEAT_CACHE_TTL_MS || 1500)));
+const WALLET_CAPACITY_CACHE_TTL_MS = Math.max(0, Math.min(60000, Number(process.env.WALLET_CAPACITY_CACHE_TTL_MS || 15000)));
+const SCANNER_BACKLOG_CACHE_TTL_MS = Math.max(0, Math.min(60000, Number(process.env.SCANNER_BACKLOG_CACHE_TTL_MS || 10000)));
+const REDIS_HEALTH_CACHE_TTL_MS = Math.max(0, Math.min(30000, Number(process.env.REDIS_HEALTH_CACHE_TTL_MS || 5000)));
 const SCALE_AUDIT_COUNT_MODE = ["exact", "planned", "estimated"].includes(String(process.env.SCALE_AUDIT_COUNT_MODE || "").trim().toLowerCase())
   ? String(process.env.SCALE_AUDIT_COUNT_MODE).trim().toLowerCase()
   : "planned";
@@ -408,95 +412,99 @@ function getRedisClient() {
   return redisClientPromise;
 }
 
-async function checkRedisHealth() {
-  if (RATE_LIMIT_BACKEND !== "redis") {
-    return {
-      ok: false,
-      backend: RATE_LIMIT_BACKEND,
-      configured: Boolean(REDIS_URL),
-      message: "RATE_LIMIT_BACKEND is not redis"
-    };
-  }
-  if (!REDIS_URL) {
-    return {
-      ok: false,
-      backend: RATE_LIMIT_BACKEND,
-      configured: false,
-      message: "REDIS_URL is missing"
-    };
-  }
-  try {
-    const client = await withOpsTimeout(getRedisClient(), "redis_connect");
-    const pong = await withOpsTimeout(client.ping(), "redis_ping");
-    return {
-      ok: pong === "PONG",
-      backend: RATE_LIMIT_BACKEND,
-      configured: true,
-      ping: pong,
-      message: pong === "PONG" ? "Redis is connected" : "Redis ping returned unexpected response"
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      backend: RATE_LIMIT_BACKEND,
-      configured: true,
-      error: err.message || String(err)
-    };
-  }
+async function checkRedisHealth(options = {}) {
+  return getCachedOpsValue(opsFastCaches.redis, REDIS_HEALTH_CACHE_TTL_MS, async () => {
+    if (RATE_LIMIT_BACKEND !== "redis") {
+      return {
+        ok: false,
+        backend: RATE_LIMIT_BACKEND,
+        configured: Boolean(REDIS_URL),
+        message: "RATE_LIMIT_BACKEND is not redis"
+      };
+    }
+    if (!REDIS_URL) {
+      return {
+        ok: false,
+        backend: RATE_LIMIT_BACKEND,
+        configured: false,
+        message: "REDIS_URL is missing"
+      };
+    }
+    try {
+      const client = await withOpsTimeout(getRedisClient(), "redis_connect");
+      const pong = await withOpsTimeout(client.ping(), "redis_ping");
+      return {
+        ok: pong === "PONG",
+        backend: RATE_LIMIT_BACKEND,
+        configured: true,
+        ping: pong,
+        message: pong === "PONG" ? "Redis is connected" : "Redis ping returned unexpected response"
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        backend: RATE_LIMIT_BACKEND,
+        configured: true,
+        error: err.message || String(err)
+      };
+    }
+  }, options);
 }
 
-async function checkRedisDeepHealth() {
-  const report = {
-    ok: false,
-    configured: Boolean(REDIS_URL),
-    backend: RATE_LIMIT_BACKEND,
-    scanner_locks_enabled: REDIS_SCANNER_LOCKS_ENABLED,
-    scanner_locks_required: REDIS_SCANNER_LOCKS_REQUIRED,
-    checks: [],
-    message: ""
-  };
+async function checkRedisDeepHealth(options = {}) {
+  return getCachedOpsValue(opsFastCaches.redisDeep, REDIS_HEALTH_CACHE_TTL_MS, async () => {
+    const report = {
+      ok: false,
+      configured: Boolean(REDIS_URL),
+      backend: RATE_LIMIT_BACKEND,
+      scanner_locks_enabled: REDIS_SCANNER_LOCKS_ENABLED,
+      scanner_locks_required: REDIS_SCANNER_LOCKS_REQUIRED,
+      checks: [],
+      message: ""
+    };
 
-  function push(name, ok, detail = "") {
-    report.checks.push({ name, ok: Boolean(ok), detail });
-  }
+    function push(name, ok, detail = "") {
+      report.checks.push({ name, ok: Boolean(ok), detail });
+    }
 
-  if (!REDIS_DEEP_CHECK_ENABLED) {
-    report.message = "REDIS_DEEP_CHECK_ENABLED=false";
-    push("deep_check_enabled", false, report.message);
-    return report;
-  }
-  if (!REDIS_URL) {
-    report.message = "REDIS_URL is missing";
-    push("redis_url", false, report.message);
-    return report;
-  }
+    if (!REDIS_DEEP_CHECK_ENABLED) {
+      report.message = "REDIS_DEEP_CHECK_ENABLED=false";
+      push("deep_check_enabled", false, report.message);
+      return report;
+    }
+    if (!REDIS_URL) {
+      report.message = "REDIS_URL is missing";
+      push("redis_url", false, report.message);
+      return report;
+    }
 
-  const key = `vidipay:ops:deep:${crypto.randomUUID()}`;
-  const lockKey = `vidipay:ops:lock:${crypto.randomUUID()}`;
-  const lockValue = `${PROCESS_STARTED_AT.toISOString()}:${crypto.randomUUID()}`;
-  try {
-    const client = await withOpsTimeout(getRedisClient(), "redis_deep_connect");
-    const ping = await withOpsTimeout(client.ping(), "redis_deep_ping");
-    push("ping", ping === "PONG", ping);
+    const key = `vidipay:ops:deep:${crypto.randomUUID()}`;
+    const lockKey = `vidipay:ops:lock:${crypto.randomUUID()}`;
+    const lockValue = `${PROCESS_STARTED_AT.toISOString()}:${crypto.randomUUID()}`;
+    try {
+      const client = await withOpsTimeout(getRedisClient(), "redis_deep_connect");
+      const ping = await withOpsTimeout(client.ping(), "redis_deep_ping");
+      push("ping", ping === "PONG", ping);
 
-    await withOpsTimeout(client.set(key, "ok", { PX: 15000 }), "redis_deep_set");
-    const value = await withOpsTimeout(client.get(key), "redis_deep_get");
-    push("set_get", value === "ok", value || "empty");
+      await withOpsTimeout(client.set(key, "ok", { PX: 15000 }), "redis_deep_set");
+      const value = await withOpsTimeout(client.get(key), "redis_deep_get");
+      push("set_get", value === "ok", value || "empty");
 
-    const lockResult = await withOpsTimeout(client.set(lockKey, lockValue, { NX: true, PX: REDIS_SCANNER_LOCK_TTL_MS }), "redis_deep_lock");
-    push("nx_px_lock", lockResult === "OK", lockResult || "not_acquired");
+      const lockResult = await withOpsTimeout(client.set(lockKey, lockValue, { NX: true, PX: REDIS_SCANNER_LOCK_TTL_MS }), "redis_deep_lock");
+      push("nx_px_lock", lockResult === "OK", lockResult || "not_acquired");
 
-    await withOpsTimeout(client.del(key), "redis_deep_del");
-    if (lockResult === "OK") await releaseRedisLock(lockKey, lockValue);
+      await withOpsTimeout(client.del(key), "redis_deep_del");
+      if (lockResult === "OK") await releaseRedisLock(lockKey, lockValue);
 
-    report.ok = report.checks.every((item) => item.ok);
-    report.message = report.ok ? "Redis ping, set/get, TTL lock are working" : "Redis deep checks failed";
-    return report;
-  } catch (err) {
-    report.error = err.message || String(err);
-    report.message = "Redis deep check failed";
-    return report;
-  }
+      report.ok = report.checks.every((item) => item.ok);
+      report.message = report.ok ? "Redis ping, set/get, TTL lock are working" : "Redis deep checks failed";
+      return report;
+    } catch (err) {
+      report.error = err.message || String(err);
+      report.message = "Redis deep check failed";
+      return report;
+    }
+  }, options);
 }
 
 async function releaseRedisLock(key, value) {
@@ -2044,10 +2052,53 @@ const opsSnapshotCache = {
   expiresAt: 0,
   generatedAt: null
 };
+const opsFastCaches = {
+  redis: { value: null, expiresAt: 0, generatedAt: null },
+  redisDeep: { value: null, expiresAt: 0, generatedAt: null },
+  scannerHeartbeats: { value: null, expiresAt: 0, generatedAt: null },
+  walletCapacity: { value: null, expiresAt: 0, generatedAt: null },
+  scannerBacklog: { value: null, expiresAt: 0, generatedAt: null }
+};
 const PAYMENT_SCANNER_WORKER_ID = String(process.env.PAYMENT_SCANNER_WORKER_ID || `scanner-${Math.random().toString(36).slice(2)}`);
 const PAYMENT_SCANNER_HEARTBEAT_TABLE = "payment_scanner_heartbeats";
 let scannerHeartbeatWarned = false;
 let scannerClaimRpcWarned = false;
+
+function cloneJsonSafe(value) {
+  if (value === undefined || value === null) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function getCachedOpsValue(cache, ttlMs, producer, options = {}) {
+  const force = options.force === true;
+  const now = Date.now();
+  if (!force && ttlMs > 0 && cache.value && cache.expiresAt > now) {
+    const cached = cloneJsonSafe(cache.value);
+    if (cached && typeof cached === "object" && !Array.isArray(cached)) {
+      cached.cache = {
+        hit: true,
+        ttl_ms: ttlMs,
+        generated_at: cache.generatedAt
+      };
+    }
+    return cached;
+  }
+
+  const fresh = await producer();
+  cache.value = cloneJsonSafe(fresh);
+  cache.generatedAt = new Date().toISOString();
+  cache.expiresAt = now + ttlMs;
+
+  const returned = cloneJsonSafe(fresh);
+  if (returned && typeof returned === "object" && !Array.isArray(returned)) {
+    returned.cache = {
+      hit: false,
+      ttl_ms: ttlMs,
+      generated_at: cache.generatedAt
+    };
+  }
+  return returned;
+}
 
 async function upsertPaymentScannerHeartbeat(payload) {
   const { error } = await supabase
@@ -2110,28 +2161,30 @@ async function recordPaymentScannerHeartbeat() {
   return true;
 }
 
-async function readPaymentScannerHeartbeats() {
-  const { data, error } = await supabase
-    .from(PAYMENT_SCANNER_HEARTBEAT_TABLE)
-    .select("*")
-    .eq("network", PAYMENT_NETWORK)
-    .eq("token", PAYMENT_TOKEN)
-    .order("last_seen_at", { ascending: false })
-    .limit(PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT);
+async function readPaymentScannerHeartbeats(options = {}) {
+  return getCachedOpsValue(opsFastCaches.scannerHeartbeats, SCANNER_HEARTBEAT_CACHE_TTL_MS, async () => {
+    const { data, error } = await supabase
+      .from(PAYMENT_SCANNER_HEARTBEAT_TABLE)
+      .select("*")
+      .eq("network", PAYMENT_NETWORK)
+      .eq("token", PAYMENT_TOKEN)
+      .order("last_seen_at", { ascending: false })
+      .limit(PAYMENT_SCANNER_HEARTBEAT_READ_LIMIT);
 
-  if (error) {
+    if (error) {
+      return {
+        available: false,
+        error: error.message || String(error),
+        rows: []
+      };
+    }
+
     return {
-      available: false,
-      error: error.message || String(error),
-      rows: []
+      available: true,
+      error: null,
+      rows: data || []
     };
-  }
-
-  return {
-    available: true,
-    error: null,
-    rows: data || []
-  };
+  }, options);
 }
 
 function buildPaymentScannerStatus(heartbeatSnapshot = { available: false, error: null, rows: [] }) {
@@ -2293,6 +2346,13 @@ function buildProcessMetrics() {
       ttl_ms: SETTINGS_CACHE_TTL_MS,
       warm: Boolean(settingsCache.value),
       expires_at: settingsCache.expiresAt ? new Date(settingsCache.expiresAt).toISOString() : null
+    },
+    ops_fast_cache: {
+      scanner_heartbeat_ttl_ms: SCANNER_HEARTBEAT_CACHE_TTL_MS,
+      wallet_capacity_ttl_ms: WALLET_CAPACITY_CACHE_TTL_MS,
+      scanner_backlog_ttl_ms: SCANNER_BACKLOG_CACHE_TTL_MS,
+      redis_health_ttl_ms: REDIS_HEALTH_CACHE_TTL_MS,
+      ops_snapshot_ttl_ms: OPS_SNAPSHOT_CACHE_TTL_MS
     }
   };
 }
@@ -2495,75 +2555,79 @@ function compactCountMap(items) {
   return Object.fromEntries(items.map((item) => [item.label, item]));
 }
 
-async function buildScannerBacklogReport() {
-  const nowIso = new Date().toISOString();
-  const counts = await Promise.all([
-    safeSupabaseCount("payment_orders", "pending_orders", (query) => query
-      .eq("status", "pending")
-      .eq("network", PAYMENT_NETWORK)
-      .eq("token", PAYMENT_TOKEN)
-      .not("wallet_address", "is", null)),
-    safeSupabaseCount("payment_orders", "claimed_pending_orders", (query) => query
-      .eq("status", "pending")
-      .eq("network", PAYMENT_NETWORK)
-      .eq("token", PAYMENT_TOKEN)
-      .not("wallet_address", "is", null)
-      .not("scanner_claimed_until", "is", null)
-      .gt("scanner_claimed_until", nowIso)),
-    safeSupabaseCount("payment_orders", "expired_claims", (query) => query
-      .eq("status", "pending")
-      .eq("network", PAYMENT_NETWORK)
-      .eq("token", PAYMENT_TOKEN)
-      .not("wallet_address", "is", null)
-      .not("scanner_claimed_until", "is", null)
-      .lte("scanner_claimed_until", nowIso)),
-    safeSupabaseCount("payment_orders", "never_checked_pending_orders", (query) => query
-      .eq("status", "pending")
-      .eq("network", PAYMENT_NETWORK)
-      .eq("token", PAYMENT_TOKEN)
-      .not("wallet_address", "is", null)
-      .is("last_checked_at", null))
-  ]);
-  return {
-    ok: counts.every((item) => item.ok),
-    checked_at: nowIso,
-    count_mode: SCALE_AUDIT_COUNT_MODE,
-    timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
-    counts: compactCountMap(counts)
-  };
+async function buildScannerBacklogReport(options = {}) {
+  return getCachedOpsValue(opsFastCaches.scannerBacklog, SCANNER_BACKLOG_CACHE_TTL_MS, async () => {
+    const nowIso = new Date().toISOString();
+    const counts = await Promise.all([
+      safeSupabaseCount("payment_orders", "pending_orders", (query) => query
+        .eq("status", "pending")
+        .eq("network", PAYMENT_NETWORK)
+        .eq("token", PAYMENT_TOKEN)
+        .not("wallet_address", "is", null)),
+      safeSupabaseCount("payment_orders", "claimed_pending_orders", (query) => query
+        .eq("status", "pending")
+        .eq("network", PAYMENT_NETWORK)
+        .eq("token", PAYMENT_TOKEN)
+        .not("wallet_address", "is", null)
+        .not("scanner_claimed_until", "is", null)
+        .gt("scanner_claimed_until", nowIso)),
+      safeSupabaseCount("payment_orders", "expired_claims", (query) => query
+        .eq("status", "pending")
+        .eq("network", PAYMENT_NETWORK)
+        .eq("token", PAYMENT_TOKEN)
+        .not("wallet_address", "is", null)
+        .not("scanner_claimed_until", "is", null)
+        .lte("scanner_claimed_until", nowIso)),
+      safeSupabaseCount("payment_orders", "never_checked_pending_orders", (query) => query
+        .eq("status", "pending")
+        .eq("network", PAYMENT_NETWORK)
+        .eq("token", PAYMENT_TOKEN)
+        .not("wallet_address", "is", null)
+        .is("last_checked_at", null))
+    ]);
+    return {
+      ok: counts.every((item) => item.ok),
+      checked_at: nowIso,
+      count_mode: SCALE_AUDIT_COUNT_MODE,
+      timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
+      counts: compactCountMap(counts)
+    };
+  }, options);
 }
 
-async function buildWalletCapacityReport() {
-  const counts = await Promise.all([
-    safeSupabaseCount("payment_wallets", "total_wallets"),
-    safeSupabaseCount("payment_wallets", "active_wallets", (query) => query.eq("is_active", true)),
-    safeSupabaseCount("payment_wallets", "available_wallets", (query) => query
-      .eq("is_active", true)
-      .is("assigned_to_telegram_id", null)),
-    safeSupabaseCount("payment_wallets", "assigned_wallets", (query) => query
-      .not("assigned_to_telegram_id", "is", null)),
-    safeSupabaseCount("payment_wallets", "wallets_with_orders", (query) => query
-      .not("assigned_order_id", "is", null))
-  ]);
-  const byLabel = compactCountMap(counts);
-  const available = byLabel.available_wallets?.count;
-  const total = byLabel.total_wallets?.count;
-  const availableKnown = typeof available === "number";
-  const totalKnown = typeof total === "number";
-  return {
-    ok: counts.every((item) => item.ok),
-    target_users: CAPACITY_TARGET_USERS,
-    count_mode: SCALE_AUDIT_COUNT_MODE,
-    timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
-    counts: byLabel,
-    capacity_gap: availableKnown ? available - CAPACITY_TARGET_USERS : null,
-    available_ratio_to_target: availableKnown && CAPACITY_TARGET_USERS > 0
-      ? Number((available / CAPACITY_TARGET_USERS).toFixed(4))
-      : null,
-    total_ratio_to_target: totalKnown && CAPACITY_TARGET_USERS > 0
-      ? Number((total / CAPACITY_TARGET_USERS).toFixed(4))
-      : null
-  };
+async function buildWalletCapacityReport(options = {}) {
+  return getCachedOpsValue(opsFastCaches.walletCapacity, WALLET_CAPACITY_CACHE_TTL_MS, async () => {
+    const counts = await Promise.all([
+      safeSupabaseCount("payment_wallets", "total_wallets"),
+      safeSupabaseCount("payment_wallets", "active_wallets", (query) => query.eq("is_active", true)),
+      safeSupabaseCount("payment_wallets", "available_wallets", (query) => query
+        .eq("is_active", true)
+        .is("assigned_to_telegram_id", null)),
+      safeSupabaseCount("payment_wallets", "assigned_wallets", (query) => query
+        .not("assigned_to_telegram_id", "is", null)),
+      safeSupabaseCount("payment_wallets", "wallets_with_orders", (query) => query
+        .not("assigned_order_id", "is", null))
+    ]);
+    const byLabel = compactCountMap(counts);
+    const available = byLabel.available_wallets?.count;
+    const total = byLabel.total_wallets?.count;
+    const availableKnown = typeof available === "number";
+    const totalKnown = typeof total === "number";
+    return {
+      ok: counts.every((item) => item.ok),
+      target_users: CAPACITY_TARGET_USERS,
+      count_mode: SCALE_AUDIT_COUNT_MODE,
+      timeout_ms: OPS_DB_AUDIT_TIMEOUT_MS,
+      counts: byLabel,
+      capacity_gap: availableKnown ? available - CAPACITY_TARGET_USERS : null,
+      available_ratio_to_target: availableKnown && CAPACITY_TARGET_USERS > 0
+        ? Number((available / CAPACITY_TARGET_USERS).toFixed(4))
+        : null,
+      total_ratio_to_target: totalKnown && CAPACITY_TARGET_USERS > 0
+        ? Number((total / CAPACITY_TARGET_USERS).toFixed(4))
+        : null
+    };
+  }, options);
 }
 
 function buildWalletImportPlan(walletCapacity) {
@@ -2879,13 +2943,13 @@ async function buildOpsSnapshot({ force = false } = {}) {
     };
   }
 
-  const scannerHeartbeats = await readPaymentScannerHeartbeats();
+  const scannerHeartbeats = await readPaymentScannerHeartbeats({ force });
   const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
   const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
-    buildWalletCapacityReport(),
-    buildScannerBacklogReport(),
-    checkRedisHealth(),
-    checkRedisDeepHealth(),
+    buildWalletCapacityReport({ force }),
+    buildScannerBacklogReport({ force }),
+    checkRedisHealth({ force }),
+    checkRedisDeepHealth({ force }),
     buildTonSignerReadinessReport()
   ]);
   const shards = buildScannerShardReport(scannerHeartbeats);
@@ -3955,44 +4019,20 @@ app.get("/ops/ton-signer", async (req, res) => {
 
 app.get("/ops/scale-contract", async (req, res) => {
   try {
-    const scannerHeartbeats = await readPaymentScannerHeartbeats();
-    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
-      buildWalletCapacityReport(),
-      buildScannerBacklogReport(),
-      checkRedisHealth(),
-      checkRedisDeepHealth(),
-      buildTonSignerReadinessReport()
-    ]);
-    const shards = buildScannerShardReport(scannerHeartbeats);
-    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
-    if (!redis.ok && !contract.blockers.includes("redis_ping")) {
-      contract.blockers.push("redis_ping");
-      contract.checks.push({ name: "redis_ping", ok: false, required: true });
-      contract.status = "blocked";
-    }
-    if (REQUIRE_TON_AUTO_PAYOUT_FOR_1_5M && !tonSigner.ok && !contract.blockers.includes("ton_signer_readiness")) {
-      contract.blockers.push("ton_signer_readiness");
-      contract.checks.push({ name: "ton_signer_readiness", ok: false, required: true });
-      contract.status = "blocked";
-    }
-    if (!redisDeep.ok && !contract.blockers.includes("redis_deep_ops")) {
-      contract.blockers.push("redis_deep_ops");
-      contract.checks.push({ name: "redis_deep_ops", ok: false, required: true });
-      contract.status = "blocked";
-    }
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
     res.json({
-      status: contract.status,
+      status: snapshot.contract?.status || "blocked",
       version: BACKEND_VERSION,
       worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
-      contract,
-      scanner,
-      shards,
-      redis,
-      redis_deep: redisDeep,
-      ton_signer: tonSigner,
-      wallet_capacity: walletCapacity,
-      backlog
+      contract: snapshot.contract,
+      scanner: snapshot.scanner,
+      shards: snapshot.shards,
+      redis: snapshot.redis,
+      redis_deep: snapshot.redis_deep,
+      ton_signer: snapshot.ton_signer,
+      wallet_capacity: snapshot.wallet_capacity,
+      backlog: snapshot.backlog,
+      cache: snapshot.cache
     });
   } catch (err) {
     res.status(503).json({
@@ -4005,40 +4045,21 @@ app.get("/ops/scale-contract", async (req, res) => {
 
 app.get("/ops/final-gate", async (req, res) => {
   try {
-    const scannerHeartbeats = await readPaymentScannerHeartbeats();
-    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
-      buildWalletCapacityReport(),
-      buildScannerBacklogReport(),
-      checkRedisHealth(),
-      checkRedisDeepHealth(),
-      buildTonSignerReadinessReport()
-    ]);
-    const shards = buildScannerShardReport(scannerHeartbeats);
-    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
-    const gate = buildFinalLaunchGate({
-      scanner,
-      shards,
-      walletCapacity,
-      backlog,
-      redis,
-      redisDeep,
-      tonSigner,
-      contract
-    });
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
     res.json({
-      status: gate.status,
+      status: snapshot.gate?.status || "blocked",
       version: BACKEND_VERSION,
       worker_mode: SCANNER_WORKER_MODE ? "scanner" : "api",
-      gate,
-      scanner,
-      shards,
-      redis,
-      redis_deep: redisDeep,
-      ton_signer: tonSigner,
-      wallet_capacity: walletCapacity,
-      backlog,
-      contract
+      gate: snapshot.gate,
+      scanner: snapshot.scanner,
+      shards: snapshot.shards,
+      redis: snapshot.redis,
+      redis_deep: snapshot.redis_deep,
+      ton_signer: snapshot.ton_signer,
+      wallet_capacity: snapshot.wallet_capacity,
+      backlog: snapshot.backlog,
+      contract: snapshot.contract,
+      cache: snapshot.cache
     });
   } catch (err) {
     res.status(503).json({
@@ -4051,28 +4072,15 @@ app.get("/ops/final-gate", async (req, res) => {
 
 app.get("/ops/launch-checklist", async (req, res) => {
   try {
-    const scannerHeartbeats = await readPaymentScannerHeartbeats();
-    const scanner = buildPublicPaymentScannerHealth(scannerHeartbeats);
-    const [walletCapacity, backlog, redis, redisDeep, tonSigner] = await Promise.all([
-      buildWalletCapacityReport(),
-      buildScannerBacklogReport(),
-      checkRedisHealth(),
-      checkRedisDeepHealth(),
-      buildTonSignerReadinessReport()
-    ]);
-    const shards = buildScannerShardReport(scannerHeartbeats);
-    const contract = buildScaleContract(scanner, shards, walletCapacity, backlog);
-    const gate = buildFinalLaunchGate({
-      scanner,
-      shards,
-      walletCapacity,
-      backlog,
-      redis,
-      redisDeep,
-      tonSigner,
-      contract
-    });
-    const walletImportPlan = buildWalletImportPlan(walletCapacity);
+    const snapshot = await buildOpsSnapshot({ force: req.query?.fresh === "true" });
+    const redis = snapshot.redis;
+    const redisDeep = snapshot.redis_deep;
+    const scanner = snapshot.scanner;
+    const shards = snapshot.shards;
+    const tonSigner = snapshot.ton_signer;
+    const backlog = snapshot.backlog;
+    const gate = snapshot.gate;
+    const walletImportPlan = buildWalletImportPlan(snapshot.wallet_capacity);
     const steps = [
       { id: "web_service", ready: !SCANNER_WORKER_MODE, check: "Public API runs as Web Service with npm start." },
       { id: "redis", ready: Boolean(redis.ok && redisDeep.ok), check: "RATE_LIMIT_BACKEND=redis, REDIS_URL set, ping/set/get/NX lock pass." },
@@ -4092,7 +4100,12 @@ app.get("/ops/launch-checklist", async (req, res) => {
       steps,
       blockers,
       gate,
-      wallet_import_plan: walletImportPlan
+      wallet_import_plan: walletImportPlan,
+      scanner,
+      shards,
+      ton_signer: tonSigner,
+      backlog,
+      cache: snapshot.cache
     });
   } catch (err) {
     res.status(503).json({
