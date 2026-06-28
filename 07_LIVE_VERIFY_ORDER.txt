@@ -1,0 +1,12 @@
+Run/check in this order after deploy:
+
+1. https://vidipay-backend.onrender.com/ops/redis-deep
+2. https://vidipay-backend.onrender.com/scanner/healthz
+3. https://vidipay-backend.onrender.com/ops/scanner-shards
+4. https://vidipay-backend.onrender.com/ops/wallet-capacity
+5. https://vidipay-backend.onrender.com/ops/ton-signer
+6. https://vidipay-backend.onrender.com/ops/final-gate
+
+Current blocker to close first:
+
+scanner_workers_alive must become at least 1, then 4.

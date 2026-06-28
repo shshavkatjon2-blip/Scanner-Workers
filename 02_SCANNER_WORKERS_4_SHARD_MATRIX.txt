@@ -1,0 +1,34 @@
+Create 4 Render Background Workers from the same scanner repo.
+
+All 4 workers use the common env from:
+
+01_SCANNER_WORKER_COMMON_ENV_COPY_TO_RENDER.env
+
+Then add only one block below per worker.
+
+Worker 0:
+PAYMENT_SCANNER_WORKER_ID=vidipay-scanner-000
+PAYMENT_SCANNER_SHARD_COUNT=4
+PAYMENT_SCANNER_SHARD_INDEX=0
+
+Worker 1:
+PAYMENT_SCANNER_WORKER_ID=vidipay-scanner-001
+PAYMENT_SCANNER_SHARD_COUNT=4
+PAYMENT_SCANNER_SHARD_INDEX=1
+
+Worker 2:
+PAYMENT_SCANNER_WORKER_ID=vidipay-scanner-002
+PAYMENT_SCANNER_SHARD_COUNT=4
+PAYMENT_SCANNER_SHARD_INDEX=2
+
+Worker 3:
+PAYMENT_SCANNER_WORKER_ID=vidipay-scanner-003
+PAYMENT_SCANNER_SHARD_COUNT=4
+PAYMENT_SCANNER_SHARD_INDEX=3
+
+Expected after all 4 are live:
+
+scanner_workers_alive >= 4
+active_shards = 4
+duplicate_shards = []
+missing_shard_sample = []
