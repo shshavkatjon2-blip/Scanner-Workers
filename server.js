@@ -2062,6 +2062,8 @@ const opsFastCaches = {
 const PAYMENT_SCANNER_WORKER_ID = String(process.env.PAYMENT_SCANNER_WORKER_ID || `scanner-${Math.random().toString(36).slice(2)}`);
 const PAYMENT_SCANNER_HEARTBEAT_TABLE = "payment_scanner_heartbeats";
 let scannerHeartbeatWarned = false;
+let scannerHeartbeatOkLogged = false;
+let scannerHeartbeatPulseTimer = null;
 let scannerClaimRpcWarned = false;
 
 function cloneJsonSafe(value) {
@@ -2157,6 +2159,10 @@ async function recordPaymentScannerHeartbeat() {
       console.warn("[payments] scanner heartbeat unavailable:", error.message || error);
     }
     return false;
+  }
+  if (SCANNER_WORKER_MODE && !scannerHeartbeatOkLogged) {
+    scannerHeartbeatOkLogged = true;
+    console.log(`[scanner] heartbeat ok worker=${PAYMENT_SCANNER_WORKER_ID} shard=${PAYMENT_SCANNER_SHARD_INDEX}/${PAYMENT_SCANNER_SHARD_COUNT}`);
   }
   return true;
 }
@@ -6352,6 +6358,18 @@ function startPaymentScanner() {
   if (!PAYMENT_SCANNER_ENABLED) {
     throw new Error("[scanner] Refusing to start because PAYMENT_SCANNER_ENABLED is not true");
   }
+  console.log(`[scanner] worker mode active id=${PAYMENT_SCANNER_WORKER_ID} shard=${PAYMENT_SCANNER_SHARD_INDEX}/${PAYMENT_SCANNER_SHARD_COUNT}`);
+  const heartbeatPulseMs = Math.max(10000, Math.min(60000, Number(process.env.PAYMENT_SCANNER_HEARTBEAT_PULSE_MS || 10000)));
+  const pulse = async () => {
+    try {
+      await recordPaymentScannerHeartbeat();
+    } catch (err) {
+      paymentScannerState.lastError = err.message || String(err);
+      console.warn("[scanner] heartbeat pulse failed:", paymentScannerState.lastError);
+    }
+  };
+  void pulse();
+  scannerHeartbeatPulseTimer = setInterval(pulse, heartbeatPulseMs);
   const nextDelay = () => {
     const jitter = PAYMENT_SCAN_JITTER_MS ? Math.floor(Math.random() * PAYMENT_SCAN_JITTER_MS) : 0;
     return PAYMENT_SCAN_INTERVAL_MS + jitter;
