@@ -6366,8 +6366,11 @@ function startPaymentScanner() {
         schedule(nextDelay());
       }
     }, delayMs);
-    timer.unref?.();
   };
+  void scanPendingPaymentOrders().catch((err) => {
+    paymentScannerState.lastError = err.message || String(err);
+    recordPaymentScannerHeartbeat().catch(() => {});
+  });
   schedule(Math.floor(Math.random() * Math.max(1, PAYMENT_SCAN_JITTER_MS || PAYMENT_SCAN_INTERVAL_MS)));
 }
 
